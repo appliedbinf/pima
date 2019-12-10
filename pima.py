@@ -1839,7 +1839,7 @@ if __name__ == '__main__':
         parser.print_help()
         print(Colors.ENDC)
         print(Colors.FAIL + '\n\nErrors:')
-        [print(i) for i in analysis.errors]
+        print([(i) for i in analysis.errors])
         print(Colors.ENDC)
         sys.exit()
 
