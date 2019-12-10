@@ -1,27 +1,26 @@
-#!/bin/env python
-
-import os
-import copy
-import glob
-import sys
-import time
-import shutil
-import subprocess
-import logging
-import re
-import datetime
-import numpy
-import pandas
-import csv
-import joblib
-import pathos.multiprocessing as mp
-import Bio.SeqIO
+#!/usr/bin/env python
 
 from argparse import ArgumentParser, HelpFormatter
+import copy
+import csv
+import datetime
+import glob
+import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+import numpy
+import joblib
+import pandas
+import pathos.multiprocessing as mp
 
 pandas.set_option('display.max_colwidth', 200)
 
-VERSION=0.1
+VERSION='0.1.1'
 
 amr_database_default = re.sub('pima.py', '', os.path.abspath(__file__)) + 'amr.fasta'
 inc_database_default = re.sub('pima.py', '', os.path.abspath(__file__)) + 'inc.fasta'
