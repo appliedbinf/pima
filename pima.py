@@ -2,30 +2,28 @@
 
 from argparse import ArgumentParser, HelpFormatter
 import copy
-import csv
 import datetime
 import glob
-import logging
+import multiprocessing as mp
 import os
 import re
 import shutil
 import subprocess
 import sys
-import time
 
 import numpy
-import joblib
 import pandas
-import pathos.multiprocessing as mp
 
 pandas.set_option('display.max_colwidth', 200)
 
-VERSION='0.1.2'
+VERSION='0.1.3'
 
-amr_database_default = re.sub('pima.py', '', os.path.realpath(__file__)) + 'amr.fasta'
-inc_database_default = re.sub('pima.py', '', os.path.realpath(__file__)) + 'inc.fasta'
-plasmid_database_default = re.sub('pima.py', '', os.path.realpath(__file__)) + 'plasmids_and_vectors.fasta'
-reference_dir_default = re.sub('pima.py', '', os.path.realpath(__file__)) + 'reference_sequences'
+pima_directory = os.path.dirname(os.path.realpath(__file__))
+amr_database_default = os.path.join(pima_directory, 'amr.fasta')
+inc_database_default = os.path.join(pima_directory, 'inc.fasta')
+plasmid_database_default = os.path.join(pima_directory,
+    'plasmids_and_vectors.fasta')
+reference_dir_default = os.path.join(pima_directory, 'reference_sequences')
 
 class Colors:
     HEADER = '\033[95m'
@@ -37,32 +35,54 @@ class Colors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-class Analysis :
+class Analysis:
 
-    def __init__(self, opts, unknown_args) :
+    def __init__(self, opts, unknown_args):
 
         self.input_given = []
 
         # Input options
-        self.ont_fast5 = os.path.realpath(os.path.expanduser(opts.ont_fast5))
+        if opts.ont_fast5 is not None:
+            self.ont_fast5 = os.path.realpath(os.path.expanduser(
+                opts.ont_fast5))
+        else:
+            self.ont_fast5 = None
         self.ont_fast5_limit = opts.ont_fast5_limit
         self.basecaller = opts.basecaller
         self.no_trim = opts.no_trim
-        self.albacore_seq_files_file = os.path.realpath(os.path.expanduser(
-            opts.albacore_seq_file))
+        if opts.albacore_seq_file is not None:
+            self.albacore_seq_files_file = os.path.realpath(
+                os.path.expanduser(opts.albacore_seq_file))
+        else:
+            self.albacore_seq_files_file = None
         self.barcode_min_fraction = 2.5
-        self.ont_fastq = os.path.realpath(os.path.expanduser(opts.ont_fastq))
+        if opts.ont_fastq is not None:
+            self.ont_fastq = os.path.realpath(os.path.expanduser(
+                opts.ont_fastq))
+        else:
+            self.ont_fastq = None
         self.ont_fastq_dir = None
         self.only_basecall = opts.only_basecall
         self.multiplexed = opts.multiplexed
         self.demux = opts.demux
         self.error_correct = opts.error_correct
-        self.illumina_fastq = os.path.realpath(os.path.expanduser(
-            opts.illumina_fastq))
-        self.genome_fasta = os.path.realpath(os.path.expanduser(opts.genome))
+        if opts.illumina_fastq is not None:
+            self.illumina_fastq = os.path.realpath(os.path.expanduser(
+                opts.illumina_fastq))
+        else:
+            self.illumina_fastq = None
+        if opts.genome is not None:
+            self.genome_fasta = os.path.realpath(os.path.expanduser(
+                opts.genome))
+        else:
+            self.genome_fasta = None
         self.will_have_genome_fasta = False
 
-        self.output_dir = os.path.realpath(os.path.expanduser(opts.output))
+        if opts.output is not None:
+            self.output_dir = os.path.realpath(os.path.expanduser(
+                opts.output))
+        else:
+            self.output_dir = None
         self.overwrite = opts.overwrite
 
         # Assembly options
@@ -78,21 +98,37 @@ class Analysis :
         self.will_have_ont_assembly = False
 
         # Plasmid and feature options
-        self.plasmid_database = opts.plasmid_database
+        if self.validate_file(opts.plasmid_database):
+            self.plasmid_database = opts.plasmid_database
+        else:
+            self.plasmid_database = None
         self.plasmids = opts.plasmids
 
-        self.amr_database = opts.amr_database
+        if self.validate_file(opts.amr_database):
+            self.amr_database = opts.amr_database
+        else:
+            self.amr_database = None
         self.no_amr = opts.no_amr
-        self.inc_database = opts.inc_database
+        if self.validate_file(opts.inc_database):
+            self.inc_database = opts.inc_database
+        else:
+            self.inc_database = None
         self.no_inc = opts.no_inc
 
-        self.feature_fastas = opts.feature
+        if opts.feature is not None:
+            self.feature_fastas = os.path.realpath(os.path.expanduser(
+                opts.feature))
+        else:
+            self.feature_fastas = None
         self.feature_dirs = []
         self.feature_names = []
         self.feature_colors = []
 
         # Reference options
-        self.reference_dir = opts.reference_dir
+        if os.path.isdir(opts.reference_dir):
+            self.reference_dir = os.path.realpath(opts.reference_dir)
+        else:
+            self.reference_dir = None
         self.organism = opts.organism
         self.no_reference = opts.no_reference
         self.no_mutations = opts.no_mutations
@@ -104,7 +140,7 @@ class Analysis :
         # How much stuff to print
         self.verbosity = opts.verbosity
 
-        # Dont' actully run any commands
+        # Don't actually run any commands
         self.fake_run = opts.fake_run
 
         # Verbosity levels and colors
@@ -121,40 +157,40 @@ class Analysis :
         self.analysis = []
 
         # See if we got any unknown args.  Not allowed.
-        if len(unknown_args) != 0 :
-            self.errors = self.errors + ['Unknown argument: ' + unknown for unknown in unknown_args]
+        if len(unknown_args) != 0:
+            self.errors += ['Unknown argument: ' + str(u) for u in unknown_args]
 
 
-    def print_and_log(self, text, verbosity, color = Colors.ENDC) :
-        if verbosity <= self.verbosity :
-            time_string = '[' + str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")) + ']'
+    def print_and_log(self, text, verbosity, color = Colors.ENDC):
+        if verbosity <= self.verbosity:
+            time_string = '[' + str(datetime.datetime.now().\
+                strftime("%Y-%m-%d %H:%M:%S")) + ']'
             print(time_string + ' ' + color + text + Colors.ENDC)
 
 
-    def run_command(self, command) :
-        if not self.fake_run :
+    def run_command(self, command):
+        if not self.fake_run:
             subprocess.call(command, shell = True)
 
 
-    def print_and_run(self, command) :
+    def print_and_run(self, command):
         self.print_and_log(command, self.command_verbosity)
         self.run_command(command)
 
 
-    def validate_file(self, the_file) :
-        return os.path.isfile(the_file)
+    def validate_file(self, the_file):
+        return os.path.isfile(the_file) and os.path.getsize(the_file) > 0
 
-
-    def validate_file_size(self, the_file) :
-        if not self.fake_run :
+    def validate_file_size(self, the_file):
+        if not self.fake_run:
             return os.stat(the_file).st_size > 0
-        else :
+        else:
             return True
 
 
     def validate_file_and_size_or_error(self, the_file, error_prefix = 'The file',
                                         presence_suffix = 'doesn\'t exist',
-                                        size_suffix = 'is size 0') :
+                                        size_suffix = 'is size 0'):
         if not self.validate_file(the_file) and not self.fake_run:
             self.print_and_log(' '.join([error_prefix, the_file, presence_suffix]), 0, Colors.FAIL)
             self.error_out()
@@ -164,7 +200,7 @@ class Analysis :
             self.error_out()
 
 
-    def minimap_ont_fastq(self, genome, fastq, bam) :
+    def minimap_ont_fastq(self, genome, fastq, bam):
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
                             '-x map-ont',
@@ -179,7 +215,7 @@ class Analysis :
         self.index_bam(bam)
 
 
-    def minimap_illumina_fastq(self, genome, fastq, bam) :
+    def minimap_illumina_fastq(self, genome, fastq, bam):
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
                             '-x sr',
@@ -195,7 +231,7 @@ class Analysis :
         self.index_bam(bam)
 
 
-    def index_bam(self, bam) :
+    def index_bam(self, bam):
         command = ' '.join(['samtools index',
                             bam,
                             '1>/dev/null 2>/dev/null'])
@@ -204,7 +240,7 @@ class Analysis :
         self.validate_file_and_size_or_error(index_bai)
 
 
-    def bwa_index(self, target, std_dir) :
+    def bwa_index(self, target, std_dir):
 
         bwa_stdout, bwa_stderr = [os.path.join(std_dir, 'bwa_index.' + i) for i in ['stdout', 'stderr']]
         command = ' '.join(['bwa index', target,
@@ -213,44 +249,48 @@ class Analysis :
         self.print_and_run(command)
 
 
-    def validate_utility(self, utility, error) :
-        if not shutil.which(utility) :
-            self.errors += [error]
-            return False
+    def validate_utility(self, utility, *extra_error_message):
+        for path in os.environ.get('PATH', '').split(':'):
+            if os.path.exists(os.path.join(path, utility)) and \
+            not os.path.isdir(os.path.join(path, utility)):
+                return True
+        self.errors += ['Cannot find {} in PATH {}'.format(utility,
+            ''.join(extra_error_message))]
+        return False
 
 
-    def error_out(self) :
+    def error_out(self):
         sys.exit(1)
 
 
-    def unless_only_basecall(function) :
-        def wrapper(self) :
-            if self.only_basecall :
+    def unless_only_basecall(function):
+        def wrapper(self):
+            if self.only_basecall:
                 return
             function(self)
         return wrapper
 
 
-    def unless_given_genome(function) :
-        def wrapper(self) :
-            if self.genome_fasta :
+    def unless_given_genome(function):
+        def wrapper(self):
+            if self.genome_fasta:
                 return
             function(self)
         return wrapper
 
 
-    def validate_ont_fast5(self) :
+    def validate_ont_fast5(self):
 
-        if self.only_basecall and (not self.ont_fast5 and not self.ont_fastq) :
+        if self.only_basecall and (not self.ont_fast5 and not self.ont_fastq):
             self.errors += ['--only-basecall requires --ont-fast5 or --ont-fastq']
             return
 
-        if not self.ont_fast5 :
+        if self.ont_fast5 is None:
             return
 
         self.print_and_log('Validating ONT fast5 files and utilities', self.main_process_verbosity, self.main_process_color)
 
-        if not os.path.isdir(self.ont_fast5) :
+        if not os.path.isdir(self.ont_fast5):
             self.errors += ['Input FAST5 directory ' + self.ont_fast5 + ' cannot be found']
             return
 
@@ -261,167 +301,167 @@ class Analysis :
             for base, dirs, files in os.walk(self.ont_fast5):
                 found_files = fnmatch.filter(files, '*.fast5')
                 fast5_files.extend(os.path.join(base, f) for f in found_files)
-        else
+        else:
             fast5_files = glob.glob(os.path.join(self.ont_fast5,
                 '**', '*.fast5'), recursive=True)
 
-        if len(fast5_files) == 0 :
+        if len(fast5_files) == 0:
             self.errors += ['Could not find FAST5 files in ' + self.ont_fast5 + ' or its subdirectories']
         else:
             self.print_and_log('Found {} FAST5 files'.format(len(fast5_files)), self.sub_process_verbosity, self.sub_process_color)
 
-        if not self.ont_fast5_limit is None:
-            if self.ont_fast5_limit <= 0 :
+        if self.ont_fast5_limit is not None:
+            if self.ont_fast5_limit <= 0:
                 self.errors += ['FAST5 limit must be greater than 0. Specified input was ' + str(self.ont_fast5_limit)]
-            if self.ont_fast5 is None :
+            if self.ont_fast5 is None:
                 self.errors += ['FAST5 limit must be accompanied by FAST5 data.']
 
 
     def validate_ont_fastq(self):
-        if not self.ont_fastq :
+        if self.ont_fastq is None:
             return
-        if not os.path.isfile(self.ont_fastq) :
-            self.errors += ['Input FASTQ file ' + self.ont_fastq + ' cannot be found']
+        if not self.validate_file(self.ont_fastq):
+            self.errors += ['Input FASTQ file ' + self.ont_fastq + ' is empty or missing']
 
 
-    def validate_genome_fasta(self) :
-        if not self.genome_fasta :
+    def validate_genome_fasta(self):
+        if self.genome_fasta is None:
             return
-        if not os.path.isfile(self.genome_fasta) :
-            self.errors += ['Input genome FASTA ' + self.genome_fasta + ' cannot be found']
+        if not self.validate_file(self.genome_fasta):
+            self.errors += ['Input genome FASTA ' + self.genome_fasta + ' is empty or missing']
         self.will_have_genome_fasta = True
 
 
-    def validate_output_dir(self) :
-        if not opts.output :
+    def validate_output_dir(self):
+        if opts.output is None:
             self.errors += ['No output directory given (--output)']
             return
-        elif self.output_dir and os.path.isdir(self.output_dir) and not self.overwrite :
-            self.errors += ['Output directory ' + self.output_dir + ' already exists.  Add --overwrite to ignore']
+        elif self.output_dir and os.path.isdir(self.output_dir) and not self.overwrite:
+            self.errors += ['Output directory ' + self.output_dir + ' already exists. Add --overwrite to ignore']
 
 
-    def validate_guppy(self) :
+    def validate_guppy(self):
 
-        if self.basecaller != 'guppy' :
+        if self.basecaller != 'guppy':
             return
 
-        if not self.ont_fast5 :
+        if self.ont_fast5 is None:
             return
 
-        if self.ont_fastq :
+        if self.ont_fastq is not None:
             return
 
         self.print_and_log('Validating Guppy basecalling utilities', self.main_process_verbosity, self.main_process_color)
 
-        for utility in ['guppy_basecaller', 'guppy_aligner', 'guppy_barcoder'] :
-                self.validate_utility(utility, utility + ' is not on the PATH (required by --basecaller albacore)')
+        for utility in ['guppy_basecaller', 'guppy_aligner', 'guppy_barcoder']:
+                self.validate_utility(utility, '(required by --basecaller albacore)')
 
         self.analysis += ['guppy_ont_fast5']
 
 
-    def validate_albacore(self) :
-        if self.basecaller != 'albacore' :
+    def validate_albacore(self):
+        if self.basecaller != 'albacore':
             return
 
-        if not self.ont_fast5 :
+        if self.ont_fast5 is None:
             return
 
-        if self.ont_fastq :
+        if self.ont_fastq is not None:
             return
 
         self.print_and_log('Validating Albacore basecalling utilities', self.main_process_verbosity, self.main_process_color)
 
-        for utility in ['read_fast5_basecaller.py'] :
-                self.validate_utility(utility, utility + ' is not on the PATH (required by --basecaller albacore)')
+        for utility in ['read_fast5_basecaller.py']:
+                self.validate_utility(utility, '(required by --basecaller albacore)')
 
         self.analysis += ['albacore_ont_fast5']
 
 
-    def validate_qcat(self) :
+    def validate_qcat(self):
 
-        if self.no_trim :
+        if self.no_trim:
             return
 
-        if self.demux != 'qcat' :
+        if self.demux != 'qcat':
             return
 
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if any(x is not None for x in [self.ont_fast5, self.ont_fastq]):
             return
 
         self.print_and_log('Validating qcat demultiplexer', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('qcat', 'qcat is not on the PATH')
+        self.validate_utility('qcat')
 
         self.analysis += ['qcat_ont_fastq']
 
 
-    def validate_porechop(self) :
+    def validate_porechop(self):
 
-        if self.no_trim :
+        if self.no_trim:
             return
 
-        if self.demux != 'porechop' :
+        if self.demux != 'porechop':
             return
 
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if any(x is not None for x in [self.ont_fast5, self.ont_fastq]):
             return
 
         self.print_and_log('Validating porechop trimmer/demultiplexer', self.main_process_verbosity, self.main_process_color)
         self.print_and_log('Warning: Porechop is no longer supported and is only included for older studies; qcat is preferred',
                            self.warning_verbosity, self.warning_color)
 
-        self.validate_utility('porechop', 'porechop is  not on the PATH (required by --demux porechop)')
+        self.validate_utility('porechop', '(required by --demux porechop)')
 
         self.analysis += ['porechop_ont_fastq']
 
 
-    def validate_lorma(self) :
+    def validate_lorma(self):
 
-        if not self.error_correct :
+        if not self.error_correct:
             return
 
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if any(x is not None for x in [self.ont_fast5, self.ont_fastq]):
             self.errors += ['--error-correct requires --ont-fast5 and/or --ont-fastq']
             return
 
         self.print_and_log('Validating lorma error corrector', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('lordec-correct', 'LoRMA is  not on the PATH (required for ONT error-correction)')
+        self.validate_utility('lordec-correct', '(required for ONT error-correction)')
 
         self.analysis += ['lorma_ont_fastq']
 
 
-    def validate_racon_correction(self) :
+    def validate_racon_correction(self):
 
-        if self.no_error_correct :
+        if self.no_error_correct:
             return
 
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if any(x is not None for x in [self.ont_fast5, self.ont_fastq]):
             return
 
         self.print_and_log('Validating RACON error corrector', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('racon', 'RACON is  not on the PATH (required for ONT error-correction)')
+        self.validate_utility('racon', '(required for ONT error-correction)')
 
         self.analysis += ['racon_ont_fastq']
 
 
     @unless_only_basecall
     @unless_given_genome
-    def validate_miniasm(self) :
-        if self.assembler != 'miniasm' :
+    def validate_miniasm(self):
+        if self.assembler != 'miniasm':
             return
 
-        if self.no_assembly :
+        if self.no_assembly:
             return
 
-        if not self.ont_fast5 and not self.ont_fastq :
+        if not self.ont_fast5 and not self.ont_fastq:
             self.errors += ['Miniasm assembly requires --ont-fast5 and/or --ont-fastq']
 
         self.print_and_log('Validating miniasm utilities', self.main_process_verbosity, self.main_process_color)
 
-        for utility in ['minimap2', 'miniasm'] :
-                self.validate_utility(utility, utility + ' is not on the PATH (required by --assembler miniasm)')
+        for utility in ['minimap2', 'miniasm']:
+                self.validate_utility(utility, '(required by --assembler miniasm)')
 
         self.will_have_genome_fasta = True
 
@@ -432,25 +472,25 @@ class Analysis :
 
     @unless_only_basecall
     @unless_given_genome
-    def validate_wtdbg2(self) :
-        if self.assembler != 'wtdbg2' :
+    def validate_wtdbg2(self):
+        if self.assembler != 'wtdbg2':
             return
 
-        if self.no_assembly :
+        if self.no_assembly:
             return
 
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if any(x is not None for x in [self.ont_fast5, self.ont_fastq]):
             return
 
         self.print_and_log('Validating wtdbg2 utilities', self.main_process_verbosity, self.main_process_color)
 
-        if not self.genome_size :
+        if self.genome_size is None:
             self.errors += ['wtdbg2 requires --genome-size']
-        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_size) :
+        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_size):
             self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_size)]
 
-        for utility in ['pgzf', 'kbm2', 'wtdbg2', 'wtpoa-cns', 'wtdbg-cns'] :
-                self.validate_utility(utility, utility + ' is not on the PATH (required by --assembler wtdbg2)')
+        for utility in ['pgzf', 'kbm2', 'wtdbg2', 'wtpoa-cns', 'wtdbg-cns']:
+                self.validate_utility(utility, '(required by --assembler wtdbg2)')
 
         self.will_have_ont_assembly = True
         self.will_have_genome_fasta = True
@@ -461,28 +501,28 @@ class Analysis :
 
     @unless_only_basecall
     @unless_given_genome
-    def validate_flye(self) :
+    def validate_flye(self):
 
-        if self.assembler != 'flye' :
+        if self.assembler != 'flye':
             return
 
-        if not self.ont_fastq and not self.ont_fast5 :
+        if not self.ont_fastq and not self.ont_fast5:
             return
 
         self.print_and_log('Validating flye utilities', self.main_process_verbosity, self.main_process_color)
 
-        if not self.ont_fast5 and not self.ont_fastq :
+        if not self.ont_fast5 and not self.ont_fastq:
             self.errors += ['Assembly requires --ont-fast5 and/or --ont-fastq']
 
-        if not self.genome_size :
+        if self.genome_size is None:
             self.errors += ['Flye requires --genome-size']
-        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_size) :
+        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_size):
             self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_size)]
 
 
 # TODO deal with Flye and 2.7/3.6 issues
-#        for utility in ['flye'] :
-#                self.validate_utility(utility, utility + ' is not on the PATH (required by --assembler flye)')
+#        for utility in ['flye']:
+#                self.validate_utility(utility, '(required by --assembler flye)')
 
         self.will_have_ont_assembly = True
         self.will_have_genome_fasta = True
@@ -491,208 +531,206 @@ class Analysis :
 
 
     @unless_only_basecall
-    def validate_racon(self) :
+    def validate_racon(self):
 
-        if not self.racon :
+        if not self.racon:
             return
 
-        if not self.ont_fast5 and not self.ont_fastq :
+        if not self.ont_fast5 and not self.ont_fastq:
             self.errors += ['Assembly requires --ont-fast5 and/or --ont-fastq']
 
         self.print_and_log('Validating racon', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('racon', 'racon' + ' is not on the PATH (required by --assembler ' + self.assembler +')')
+        self.validate_utility('racon', '(required for assembly)')
 
         self.analysis += ['racon_ont_assembly']
 
 
     @unless_only_basecall
-    def validate_medaka(self) :
+    def validate_medaka(self):
 
-#        if not self.medaka :
+#        if not self.medaka:
 #            return
 
-        if not self.will_have_ont_assembly :
+        if not self.will_have_ont_assembly:
             return
 
         self.print_and_log('Validating medaka', self.main_process_verbosity, self.main_process_color)
 
-        if not self.ont_fast5 and not self.ont_fastq :
+        if not self.ont_fast5 and not self.ont_fastq:
             self.errors += ['--medaka requires --ont-fast5 and/or --ont-fastq']
 
-        if not self.will_have_genome_fasta :
+        if not self.will_have_genome_fasta:
             self.errors += ['--medaka requires that a genome be assembled or supplied']
 
-        self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)')
+        self.validate_utility('medaka_consensus', '(required by --medaka)')
 
         self.analysis += ['medaka_ont_assembly']
 
 
     @unless_only_basecall
-    def validate_nanopolish(self) :
+    def validate_nanopolish(self):
 
-        if not self.nanopolish :
+        if not self.nanopolish:
             return
 
         self.print_and_log('Validating Nanopolish', self.main_process_verbosity, self.main_process_color)
 
-        if not self.ont_fast5 :
+        if not self.ont_fast5:
             self.errors += ['--nanopolish requires --ont-fast5']
 
-        if not self.will_have_genome_fasta :
+        if not self.will_have_genome_fasta:
             self.errors += ['--nanopolish requires that a genome be assembled or supplied']
 
-        self.validate_utility('nanopolish', 'nanopolish is not on the PATH (required by --nanopolish)')
+        self.validate_utility('nanopolish', '(required by --nanopolish)')
 
         self.analysis += ['nanopolish_ont_assembly']
 
 
     @unless_only_basecall
-    def validate_illumina_fastq(self) :
+    def validate_illumina_fastq(self):
 
-        if not self.illumina_fastq :
+        if self.illumina_fastq is None:
             return
 
         self.print_and_log('Validating Illumina data', self.main_process_verbosity, self.main_process_color)
 
-        for r_fastq in self.illumina_fastq :
-            if not os.path.isfile(r_fastq) :
-                self.errors += ['Illumian FASTQ file' + r_fastq + ' cannot be found']
+        for r_fastq in self.illumina_fastq:
+            if not self.validate_file(r_fastq):
+                self.errors += ['Illumian FASTQ file' + r_fastq + ' is empty or missing']
 
         # Assume we want to use Illumina data to polish a given genome or ONT assembly
-        if self.ont_fast5 or self.ont_fastq or self.genome_fasta :
-            self.validate_utility('pilon', 'pilon is not on the PATH (required by --illumina-fastq with --ont-fastq, --ont-fast, or --genome)')
+        if self.ont_fast5 or self.ont_fastq or self.genome_fasta:
+            self.validate_utility('pilon', '(required by --illumina-fastq with --ont-fastq, --ont-fast, or --genome)')
             #self.analysis += ['spades_ont_assembly']
             self.analysis += ['pilon_assembly']
-        else :
-            self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)')
+        else:
+            self.validate_utility('spades.py', '(required by --illumina-fastq)')
             self.analysis += ['spades_illumina_fastq']
             self.will_have_genome_fasta = True
 
 
     @unless_only_basecall
-    def validate_features(self) :
+    def validate_features(self):
 
-        if self.feature_fastas is None :
+        if self.feature_fastas is None:
             self.feature_fastas = []
 
-        if not self.no_amr :
+        if not self.no_amr:
             self.feature_fastas += [self.amr_database]
 
-        if not self.no_inc :
+        if not self.no_inc:
             self.feature_fastas += [self.inc_database]
 
-        if len(self.feature_fastas) == 0 :
+        if len(self.feature_fastas) == 0:
             return
 
-        if not self.will_have_genome_fasta :
+        if not self.will_have_genome_fasta:
             return
 
         self.print_and_log('Validating feature sets', self.main_process_verbosity, self.main_process_color)
 
-        for feature_fasta in self.feature_fastas :
-            if not os.path.isfile(feature_fasta) :
-                self.errors += ['Can\'t find feature database ' + feature_fasta]
+        for feature_fasta in self.feature_fastas:
+            if not self.validate_file(feature_fasta):
+                self.errors += ['Missing or empty feature database ' + feature_fasta]
 
 
     @unless_only_basecall
-    def validate_blast(self) :
+    def validate_blast(self):
 
-        if len(self.feature_fastas) == 0 :
+        if len(self.feature_fastas) == 0:
             return
 
-        if not self.will_have_genome_fasta :
+        if not self.will_have_genome_fasta:
             return
 
         self.print_and_log('Validating blast utilities', self.main_process_verbosity, self.main_process_color)
 
-        for util in ['makeblastdb', 'blastn', 'bedtools'] :
-            if not shutil.which(util) :
-                self.errors += ['Can\'t find ' + util + ' on the PATH']
+        for util in ['makeblastdb', 'blastn', 'bedtools']:
+            self.validate_utility(util)
 
-        self.analysis = self.analysis + ['blast_feature_sets']
+        self.analysis += ['blast_feature_sets']
 
 
     @unless_only_basecall
-    def validate_reference(self) :
+    def validate_reference(self):
 
-        if not self.organism :
+        if not self.organism:
             return
 
         self.print_and_log('Validating reference genome and utilities', self.main_process_verbosity, self.main_process_color)
 
         #1 - Check for mummer utils
-        for util in ['dnadiff', 'nucmer', 'mummer'] :
-            if not shutil.which(util) :
-                self.errors += ['Can\'t find ' + util + ' on the PATH']
+        for util in ['dnadiff', 'nucmer', 'mummer']:
+            self.validate_utility(util)
 
         #2 - Check for the reference sequence.
-        if not os.path.isdir(self.reference_dir) :
+        if not os.path.isdir(self.reference_dir):
             self.errors += ['Can\'t find reference directory ' + self.reference_dir]
 
-        if not self.no_reference :
-            if self.organism == None :
-                self.errors += ['Organism not given.  Add --no-reference to skip reference comparison']
-            else :
+        if not self.no_reference:
+            if self.organism == None:
+                self.errors += ['Organism not given. Add --no-reference to skip reference comparison']
+            else:
                 self.organism_dir = os.path.join(self.reference_dir, self.organism)
-                if not os.path.isdir(self.organism_dir) :
+                if not os.path.isdir(self.organism_dir):
                     self.errors += ['Can\'t find organism directory ' + self.organism_dir]
 
                 #It should be in reference_sequences/organism
                 self.reference_fasta = os.path.join(self.organism_dir, 'genome.fasta')
-                if not os.path.isfile(self.reference_fasta) :
-                    self.errors += ['Can\'t find genome.fasta in the reference directory.']
+                if not self.validate_file(self.reference_fasta):
+                    self.errors += ['Missing or empty genome.fasta in the reference directory']
                 self.mutation_regions_bed = os.path.join(self.reference_dir, self.organism, 'mutation_regions.bed')
-                if not os.path.isfile(self.mutation_regions_bed) :
-                    self.errors += ['Can\'t find mutation_regions.bed in the reference directory.']
+                if not self.validate_file(self.mutation_regions_bed):
+                    self.errors += ['Missing or empty mutation_regions.bed in the reference directory']
 
-        if  self.will_have_genome_fasta :
-            self.analysis = self.analysis + ['call_insertions']
+        if self.will_have_genome_fasta:
+            self.analysis += ['call_insertions']
 
 
     @unless_only_basecall
-    def validate_mutations(self) :
+    def validate_mutations(self):
 
-        if self.no_mutations :
+        if self.no_mutations:
             return
 
-        if not self.organism :
+        if not self.organism:
             return
 
         self.print_and_log('Validating mapping and variant utilities', self.main_process_verbosity, self.main_process_color)
 
         if not (self.ont_fast5 or self.ont_fastq or self.illumina_fastq):
             self.errors += ['Can\'t call mutations without a FAST5 or FASTQ dataset']
-        if not self.organism or self.no_reference :
+        if not self.organism or self.no_reference:
             self.errors += ['Can\'t call mutations without a reference genome']
 
-        for utility in ['minimap2', 'samtools', 'bcftools'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
+        for utility in ['minimap2', 'samtools', 'bcftools']:
+            self.validate_utility(utility, '(required for AMR mutations)')
 
-        self.analysis = self.analysis + ['call_amr_mutations']
+        self.analysis += ['call_amr_mutations']
 
 
     @unless_only_basecall
-    def validate_plasmids(self) :
+    def validate_plasmids(self):
 
-        if not self.plasmids :
+        if not self.plasmids:
             return
 
         self.print_and_log('Validating plasmid database and utilities', self.main_process_verbosity, self.main_process_color)
 
-        for utility in ['pblat', 'Rscript', 'R', 'pChunks.R'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
+        for utility in ['pblat', 'Rscript', 'R', 'pChunks.R']:
+            self.validate_utility(utility, '(required for plasmid finding)')
 
-        if not os.path.isfile(self.plasmid_database) :
-            self.errors += ['Can\'t find plasmid database ' + self.plasmid_database]
+        if not self.validate_file(self.plasmid_database):
+            self.errors += ['Missing or empty plasmid database ' + self.plasmid_database]
 
-        if not self.will_have_genome_fasta :
+        if not self.will_have_genome_fasta:
             self.errors += ['Can\'t call plasmids without a genome or an assembly']
 
-        self.analysis = self.analysis + ['call_plasmids']
+        self.analysis += ['call_plasmids']
 
 
-    def validate_options(self) :
+    def validate_options(self):
 
         self.validate_output_dir()
 
@@ -725,21 +763,21 @@ class Analysis :
         self.validate_mutations()
         self.validate_plasmids()
 
-        if len(self.analysis) == 0 :
-            self.errors = self.errors + ['Nothing to do!']
+        if len(self.analysis) == 0:
+            self.errors += ['Nothing to do!']
 
 
-    def load_organisms() :
+    def load_organisms():
         print('Pretending to load organisms')
 
-    def list_organisms() :
+    def list_organisms():
         '''
         Lists the set of reference organisms available to Pima
         '''
 
-    def make_output_dir(self) :
+    def make_output_dir(self):
 
-        if os.path.isdir(self.output_dir) :
+        if os.path.isdir(self.output_dir):
             shutil.rmtree(self.output_dir)
 
         os.mkdir(self.output_dir)
@@ -749,7 +787,7 @@ class Analysis :
         self.logging_file = os.path.join(self.output_dir, 'log.txt')
 
 
-    def guppy_ont_fast5(self) :
+    def guppy_ont_fast5(self):
 
         self.print_and_log('Basecalling ONT reads with Guppy', self.main_process_verbosity, self.main_process_color)
 
@@ -765,7 +803,7 @@ class Analysis :
                     '-i', self.ont_fast5,
                     '-s', self.ont_fastq_dir,
                     '--compress-fastq',
-                    '--device "cuda:0"',
+                    '--device auto',
                     '--flowcell FLO-MIN106 --kit SQK-RBK004',
                     '1>' + stdout_file,
                     '2>' + stderr_file])
@@ -781,7 +819,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after albacore', 'is empty')
 
 
-    def albacore_ont_fast5(self) :
+    def albacore_ont_fast5(self):
 
         self.print_and_log('Basecalling ONT reads with Albacore', self.main_process_verbosity, self.main_process_color)
 
@@ -793,7 +831,7 @@ class Analysis :
         stderr_file = os.path.join(self.ont_fastq_dir, 'albacore')
         # Run the basecalling with the ONT basecaller
         command = ['ls', self.ont_fast5, '|']
-        if self.ont_fast5_limit :
+        if self.ont_fast5_limit:
             command += ['sort -n | head', '-' + str(self.ont_fast5_limit), '|']
         command += ['parallel -n1',
                     '-j' + str(self.threads),
@@ -825,7 +863,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after albacore', 'is empty')
 
 
-    def porechop_ont_fastq(self) :
+    def porechop_ont_fastq(self):
 
         self.print_and_log('Running Porechop on raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
         self.ont_fastq = os.path.join(self.ont_fastq_dir, 'ont.fastq')
@@ -842,9 +880,9 @@ class Analysis :
         self.validate_file_and_size_or_error(self.ont_fastq, 'ONT FASTQ file', 'cannot be found after porechop', 'is empty')
 
 
-    def qcat_ont_fastq(self) :
+    def qcat_ont_fastq(self):
 
-        if not self.ont_fastq_dir :
+        if self.ont_fastq_dir is None:
             self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
             os.makedirs(self.ont_fastq_dir)
 
@@ -853,9 +891,9 @@ class Analysis :
 
         # Find the FASTQ file to use
         qcat_input_fastq = None
-        if hasattr(self, 'ont_raw_fastq') :
+        if hasattr(self, 'ont_raw_fastq'):
             qcat_input_fastq = self.ont_raw_fastq
-        else :
+        else:
             qcat_input_fastq = self.ont_fastq
 
         self.print_and_log('Running qcat on raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
@@ -888,15 +926,15 @@ class Analysis :
 
         # In the case of a single barcode just go on as normal, otherwise, make an Analysis for each barcode.
         # TODO - handle this differntly if demultiplexing was requested.
-        if len(self.barcodes) == 1 or not self.multiplexed :
+        if len(self.barcodes) == 1 or not self.multiplexed:
             self.ont_fastq = os.path.join(self.demultiplexed_dir, self.barcode_summary.iloc[0,0] + '.fastq')
-        else :
-            self.analysis = ['start_barcode_analysis']
+        else:
+            self.analysis += ['start_barcode_analysis']
 
 
-    def start_barcode_analysis(self) :
+    def start_barcode_analysis(self):
 
-        for barcode in self.barcodes :
+        for barcode in self.barcodes:
             barcode_analysis = copy.deepcopy(self)
             barcode_analysis.no_trim = True
             barcode_analysis.multiplexed = False
@@ -907,11 +945,11 @@ class Analysis :
             barcode_analysis.go()
 
 
-    def lorma_ont_fastq(self) :
+    def lorma_ont_fastq(self):
 
         self.print_and_log('Using lordec-correct to error-correct ONT reads', self.main_process_verbosity, self.main_process_color)
 
-        if not self.ont_fastq_dir :
+        if self.ont_fastq_dir is None:
             self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
             os.makedirs(self.ont_fastq_dir)
 
@@ -935,8 +973,8 @@ class Analysis :
         # Make a FASTQish file from the LoRMA output
         self.print_and_log('Converting LoRMA FASTA to a FASTQ', self.sub_process_verbosity, self.sub_process_color)
         quality = 12
-        with open(lorma_fasta, 'r') as lorma_fasta_handle, open(lorma_fastq, 'w') as lorma_fastq_handle :
-            for fasta in Bio.SeqIO.parse(lorma_fasta_handle, 'fasta') :
+        with open(lorma_fasta, 'r') as lorma_fasta_handle, open(lorma_fastq, 'w') as lorma_fastq_handle:
+            for fasta in Bio.SeqIO.parse(lorma_fasta_handle, 'fasta'):
                  fasta.letter_annotations['phred_quality'] = [quality] * len(fasta)
                  Bio.SeqIO.write(fasta, lorma_fastq_handle, 'fastq')
 
@@ -945,11 +983,11 @@ class Analysis :
         self.ont_fastq = lorma_fastq
 
 
-    def racon_ont_fastq(self) :
+    def racon_ont_fastq(self):
 
         self.print_and_log('Using RACON to error-correct ONT reads', self.main_process_verbosity, self.main_process_color)
 
-        if not self.ont_fastq_dir :
+        if self.ont_fastq_dir is None:
             self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
             os.makedirs(self.ont_fastq_dir)
 
@@ -973,8 +1011,8 @@ class Analysis :
         # Make a FASTQish file from the LoRMA output
         self.print_and_log('Converting LoRMA FASTA to a FASTQ', self.sub_process_verbosity, self.sub_process_color)
         quality = 12
-        with open(lorma_fasta, 'r') as lorma_fasta_handle, open(lorma_fastq, 'w') as lorma_fastq_handle :
-            for fasta in Bio.SeqIO.parse(lorma_fasta_handle, 'fasta') :
+        with open(lorma_fasta, 'r') as lorma_fasta_handle, open(lorma_fastq, 'w') as lorma_fastq_handle:
+            for fasta in Bio.SeqIO.parse(lorma_fasta_handle, 'fasta'):
                  fasta.letter_annotations['phred_quality'] = [quality] * len(fasta)
                  Bio.SeqIO.write(fasta, lorma_fastq_handle, 'fastq')
 
@@ -983,7 +1021,7 @@ class Analysis :
         self.ont_fastq = lorma_fastq
 
 
-    def miniasm_ont_fastq(self) :
+    def miniasm_ont_fastq(self):
 
         self.print_and_log('Assembling ONT reads using minimap2/miniasm', self.main_process_verbosity, self.main_process_color)
 
@@ -1027,7 +1065,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'ONT miniasm FASTA', 'cannot be found after miniasm', 'is empty')
 
 
-    def wtdbg2_ont_fastq(self) :
+    def wtdbg2_ont_fastq(self):
 
         self.print_and_log('Assembling ONT reads using wtdbg2', self.main_process_verbosity, self.main_process_color)
 
@@ -1064,7 +1102,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'WTDBG2 assembly fasta', 'cannot be found after miniasm', 'is empty')
 
 
-    def flye_ont_fastq(self) :
+    def flye_ont_fastq(self):
 
         self.print_and_log('Assembling ONT reads using flye', self.main_process_verbosity, self.main_process_color)
 
@@ -1098,7 +1136,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome fasta', 'cannot be found after copying Flye output', 'is empty')
 
 
-    def racon_ont_assembly(self) :
+    def racon_ont_assembly(self):
 
         self.racon_dir = os.path.join(self.output_dir, 'racon')
         os.makedirs(self.racon_dir)
@@ -1108,7 +1146,7 @@ class Analysis :
         self.ont_racon_fasta = []
 
         input_assembly = self.genome_fasta
-        for i in range(0, self.racon_rounds) :
+        for i in range(0, self.racon_rounds):
 
             # Run minimap2 for round 1
             self.print_and_log('Running minimap2 round' + str(i), self.sub_process_verbosity, self.sub_process_color)
@@ -1147,7 +1185,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
 
 
-    def medaka_ont_assembly(self) :
+    def medaka_ont_assembly(self):
 
         self.print_and_log('Running Medaka on ONT assembly', self.main_process_verbosity, self.main_process_color)
 
@@ -1178,10 +1216,10 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
 
 
-    def nanopolish_ont_assembly(self) :
+    def nanopolish_ont_assembly(self):
 
         self.print_and_log('Running Nanopolish on ONT assembly', self.main_process_verbosity, self.main_process_color)
-        if not self.ont_fastq and self.ont_fast5 :
+        if any(x is not None for x in [self.ont_fastq, self.ont_fast5]):
             self.print_and_log('Need both ONT FAST5 and ONT FASTQ data to run Nanopolish', 0, self.error_color)
 
         self.nanopolish_dir = os.path.join(self.output_dir, 'nanopolish')
@@ -1203,13 +1241,13 @@ class Analysis :
         coverage.columns = ['coverage']
 
         # If any need to be downsampled, just do them all
-        if (coverage.iloc[:,0] > self.nanopolish_coverage_max * 1.25).any() :
+        if (coverage.iloc[:,0] > self.nanopolish_coverage_max * 1.25).any():
             contig_bams = []
-            for contig in coverage.index.values :
+            for contig in coverage.index.values:
                 contig_bam = os.path.join(self.nanopolish_dir, contig + '.bam')
-                contig_bams +=  [contig_bam]
+                contig_bams += [contig_bam]
                 downsampling_fraction = self.nanopolish_coverage_max / coverage.loc[contig,'coverage']
-                if downsampling_fraction > 1 :
+                if downsampling_fraction > 1:
                     downsampling_fraction = 1
                 command = ' '.join(['samtools view -b',
                                     '-s', str(float(downsampling_fraction)),
@@ -1220,12 +1258,12 @@ class Analysis :
 
             # Merge the resulting bams
             downsampled_bam = os.path.join(self.nanopolish_dir, 'downsampled.bam')
-            if (len(contig_bams) > 1) :
+            if (len(contig_bams) > 1):
                 command = ' '.join(['samtools merge',
                                     downsampled_bam,
                                     ' '.join(contig_bams)])
                 self.print_and_run(command)
-            else :
+            else:
                 command = ' '.join(['cp', contig_bams[0], downsampled_bam])
                 self.print_and_run(command)
 
@@ -1236,7 +1274,7 @@ class Analysis :
         # Index the FAST5 data
         self.print_and_log('Indexing FAST5 data', self.sub_process_verbosity, self.sub_process_color)
         index_stdout, index_stderr = [os.path.join(self.nanopolish_dir, 'index.' + i) for i in ['stdout', 'stderr']]
-        if self.albacore_seq_files_file is None :
+        if self.albacore_seq_files_file is None:
             # Find the Albacore sequencing files
             search_string = os.path.join(self.ont_fastq_dir, '*', 'sequencing_summary.txt')
             albacore_seq_files = glob.glob(search_string)
@@ -1277,10 +1315,10 @@ class Analysis :
         self.genome_fasta = self.nanopolish_fasta
 
 
-    def run_nanopolish_range(self, nanopolish_range) :
+    def run_nanopolish_range(self, nanopolish_range):
         print(nanopolish_range)
         nanopolish_vcf = self.nanopolish_prefix + '.' + nanopolish_range + '.vcf'
-        while (1) :
+        while (1):
             command = ' '.join(['nanopolish variants --faster --consensus',
                                 '-o', nanopolish_vcf,
                                 '-w', nanopolish_range,
@@ -1291,14 +1329,14 @@ class Analysis :
                                 '1>' + self.nanopolish_stdout,
                                 '2>' + self.nanopolish_stderr])
             self.print_and_run(command)
-            if self.validate_file(nanopolish_vcf) :
+            if self.validate_file(nanopolish_vcf):
                 break
-            else :
+            else:
                 self.print_and_log('Nanopolish VCF' + nanopolish_vcf + 'failed; trying again',
                                    self.sub_process_verbosity, self.sub_process_color)
 
 
-    def spades_ont_assembly(self) :
+    def spades_ont_assembly(self):
 
         self.print_and_log('Running spades with trusted ONT contigs', self.main_process_verbosity, self.main_process_color)
 
@@ -1325,7 +1363,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after SPAdes', 'is empty')
 
 
-    def spades_illumina_fastq(self) :
+    def spades_illumina_fastq(self):
 
         self.print_and_log('Assembling Illumina FASTQ data', self.main_process_verbosity, self.main_process_color)
 
@@ -1352,7 +1390,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after SPAdes', 'is empty')
 
 
-    def pilon_assembly(self) :
+    def pilon_assembly(self):
 
         self.print_and_log('Running Pilon on genome assembly', self.main_process_verbosity, self.main_process_color)
 
@@ -1382,12 +1420,12 @@ class Analysis :
         self.genome_fasta = self.pilon_fasta
 
 
-    def blast_feature_sets(self) :
+    def blast_feature_sets(self):
 
         self.features_dir = os.path.join(self.output_dir, 'features')
         os.makedirs(self.features_dir)
 
-        for feature_number in range(len(self.feature_fastas)) :
+        for feature_number in range(len(self.feature_fastas)):
             feature_fasta = self.feature_fastas[feature_number]
             feature_name = re.sub('\\.f.*', '', os.path.basename(feature_fasta))
             feature_dir = os.path.join(self.features_dir, feature_name)
@@ -1396,7 +1434,7 @@ class Analysis :
             self.feature_names += [feature_name]
 
 
-    def blast_features(self, feature_fasta, feature_dir) :
+    def blast_features(self, feature_fasta, feature_dir):
 
         # Make a directory for the new features
         os.makedirs(feature_dir)
@@ -1456,7 +1494,7 @@ class Analysis :
         self.print_and_run(command)
 
 
-    def call_amr_mutations(self) :
+    def call_amr_mutations(self):
 
         self.print_and_log('Calling AMR mutations', self.main_process_verbosity, self.main_process_color)
 
@@ -1469,16 +1507,16 @@ class Analysis :
 
         # Map the reads to the reference sequence
         self.reference_mapping_bam = os.path.join(self.mutations_dir, 'reference_mapping.bam')
-        if self.illumina_fastq :
+        if self.illumina_fastq is not None:
             self.minimap_illumina_fastq(self.reference_fasta, self.illumina_fastq, self.reference_mapping_bam)
-        else :
+        else:
             self.minimap_ont_fastq(self.reference_fasta, self.ont_fastq, self.reference_mapping_bam)
         self.index_bam(self.reference_mapping_bam)
 
         # Pull out each region, one at a time
         region_data = pandas.read_csv(filepath_or_buffer = self.mutation_regions_bed, sep = '\t', header = None)
         region_data.columns = ['contig', 'start', 'stop', 'description']
-        for region_i in range(region_data.shape[0]) :
+        for region_i in range(region_data.shape[0]):
             region_i_description = region_data.loc[region_i,'description']
             self.print_and_log('Finding AMR mutations for ' + region_i_description,
                                self.sub_process_verbosity, self.sub_process_color)
@@ -1540,15 +1578,15 @@ class Analysis :
             region_mutations = pandas.read_csv(filepath_or_buffer = region_vcf, sep = '\t')
             region_mutations = pandas.concat([region_mutations,
                                               pandas.DataFrame(numpy.repeat(region_i_description, region_mutations.shape[0]))], axis = 1)
-            if self.amr_mutations is None :
+            if self.amr_mutations is None:
                self.amr_mutations = region_mutations
                self.amr_mutations.columns.values[len(self.amr_mutations.columns) - 1] = 'sample'
-            else :
+            else:
                 region_mutations.columns = self.amr_mutations.columns
                 self.amr_mutations = self.amr_mutations.append(region_mutations)
 
 
-    def call_plasmids(self) :
+    def call_plasmids(self):
 
         self.print_and_log('Calling plasmids', self.main_process_verbosity, self.main_process_color)
 
@@ -1600,7 +1638,7 @@ class Analysis :
         self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t')
 
 
-    def call_insertions(self) :
+    def call_insertions(self):
 
         self.print_and_log('Calling insertions', self.main_process_verbosity, self.main_process_color)
 
@@ -1621,7 +1659,7 @@ class Analysis :
         # Pull out the aligned regions of the two genomes
         self.print_and_log('Finding reference and query specific insertions', self.sub_process_verbosity, self.sub_process_color)
         one_coords = self.dnadiff_prefix + '.1coords'
-        reference_aligned_bed =  os.path.join(self.insertions_dir, 'reference_aligned.bed')
+        reference_aligned_bed = os.path.join(self.insertions_dir, 'reference_aligned.bed')
         genome_aligned_bed = os.path.join(self.insertions_dir, 'genome_aligned.bed')
         command = ' '.join(['cat', one_coords,
                             '| awk \'{OFS = "\\t"; if ($2 < $1){t = $2; $2 = $1; $1 = t} print $12,$1,$2}\' | sort -k 1,1 -k 2,2n',
@@ -1658,29 +1696,29 @@ class Analysis :
         self.print_and_run(command)
 
 
-    def clean_up(self) :
+    def clean_up(self):
 
-        if (self.genome_fasta) :
+        if (self.genome_fasta):
             final_fasta = os.path.join(self.output_dir, 'assembly.fasta')
             command = ' '.join(['cp', self.genome_fasta, final_fasta])
             self.print_and_run(command)
 
-    def go(self) :
+    def go(self):
 
         self.analysis = ['make_output_dir', 'start_logging'] + self.analysis + ['clean_up']
         analysis_string = '\n'.join([str(i+1) + ') ' + self.analysis[i] for i in range(len(self.analysis))])
         print(self.main_process_color + analysis_string + Colors.ENDC)
 
-        while (True) :
+        while (True):
             step = self.analysis[0]
             self.analysis = self.analysis[1:]
             function = getattr(self, step)
             function()
 
-            if (len(self.analysis) == 0) :
+            if (len(self.analysis) == 0):
                 break
 
-def main(opts) :
+def main(opts):
 
     """
 
@@ -1707,25 +1745,23 @@ if __name__ == '__main__':
     input_group.add_argument('--ont-fast5', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory containing ONT FAST5 files')
     input_group.add_argument('--ont-fast5-limit', required = False, type = int, default = None, metavar = '<DIR_COUNT>',
-                        help = 'Limit on the number of FAST5 directories to include in the analysis (default : all dirs)')
+                        help = 'Limit on the number of FAST5 directories to include in the analysis (default: all dirs)')
     input_group.add_argument('--basecaller', required = False, default = 'guppy', choices = ['guppy', 'albacore'],
-                        help = 'The basecaller for ONT FAST5 data (default : %(default)s)')
+                        help = 'The basecaller for ONT FAST5 data (default: %(default)s)')
     input_group.add_argument('--ont-fastq', required = False, default = None, metavar = '<FASTQ|GZ>',
                         help = 'File containing basecalled ONT reads')
     input_group.add_argument('--multiplexed', required = False, default = False, action = 'store_true',
-                        help = 'The ONT data are multiplexed (default : %(default)s)')
+                        help = 'The ONT data are multiplexed (default: %(default)s)')
     input_group.add_argument('--demux', required = False, default = 'qcat', choices = ['qcat', 'porechop'],
-                        help = 'Demultiplexer/trimmer to use (default : %(default)s)')
+                        help = 'Demultiplexer/trimmer to use (default: %(default)s)')
     input_group.add_argument('--no-trim', required = False, default = False, action = 'store_true',
-                        help = 'Do no trim the ONT reads (default : %(default)s)')
+                        help = 'Do no trim the ONT reads (default: %(default)s)')
     input_group.add_argument('--error-correct', required = False, default = False, action = 'store_true',
-                        help = 'Use LORMA to  error-correct ONT reads (default : %(default)s)')
+                        help = 'Use LORMA to error-correct ONT reads (default: %(default)s)')
     input_group.add_argument('--only-basecall', required = False, default = False, action = 'store_true',
-                        help = 'Just basecall and demultiplex/trim/correct.  No downstream analysis.')
-
+                        help = 'Just basecall and demultiplex/trim/correct. No downstream analysis.')
     input_group.add_argument('--illumina-fastq', required = False, default = None, nargs = 2, metavar = '<FASTQ|GZ>',
                         help = 'Files containing R1 & R2 Illumina reads')
-
     input_group.add_argument('--genome', required = False, default = None, metavar = '<GENOME_FASTA>',
                         help = 'A genome FASTA file to be used in place of assembly')
 
@@ -1734,38 +1770,38 @@ if __name__ == '__main__':
     output_group.add_argument('--output', required = False, default = None, metavar = '<OUTPUT_DIR>',
                         help = 'Output directory for the analysis')
     output_group.add_argument('--overwrite', required = False, default = False, action = 'store_true',
-                        help = 'Overwrite an existing output directory (default : %(default)s)')
+                        help = 'Overwrite an existing output directory (default: %(default)s)')
 
 
     # Assembly options
     assembly_group = parser.add_argument_group('Assembly options')
     assembly_group.add_argument('--assembler', required = False, default = 'flye', type = str,
                         choices = ['miniasm', 'wtdbg2', 'flye'],
-                        help = 'Assembler to use (default : %(default)s)')
+                        help = 'Assembler to use (default: %(default)s)')
     assembly_group.add_argument('--genome-size', required = False, default = None, type = str, metavar = '<GENOME_SIZE>',
-                        help = 'Genome size estimate for Flye (default : %(default)s))')
+                        help = 'Genome size estimate for flye or wtdbg2 in human readable format, e.g., 4.5M (default: %(default)s))')
     assembly_group.add_argument('--racon', required = False, default = False, action = 'store_true',
-                        help = 'Force the generation a racon consenus (default : %(default)s)')
+                        help = 'Force the generation a racon consenus (default: %(default)s)')
     assembly_group.add_argument('--racon-rounds', required = False, default = 4, type = int, metavar = '<NUM_ROUNDS>',
-                        help = 'Number of RACON rounds used to generate a consensus (default : %(default)s)')
+                        help = 'Number of RACON rounds used to generate a consensus (default: %(default)s)')
     assembly_group.add_argument('--medaka', required = False, default = False, action = 'store_true',
-                        help = 'Run Medaka on the assembly (faster) (default : %(default)s)')
+                        help = 'Run Medaka on the assembly (faster) (default: %(default)s)')
     assembly_group.add_argument('--nanopolish', required = False, default = False, action = 'store_true',
-                        help = 'Run Nanopolish on the RACON consensus (slow) (default : %(default)s)')
+                        help = 'Run Nanopolish on the RACON consensus (slow) (default: %(default)s)')
     assembly_group.add_argument('--max-nanopolish-coverage', required = False, type = int, default = 100, metavar = '<MAX_COVERAGE>',
-                        help = 'Maximum coverage before downsampling nanopolish input (default : %(default)s)')
+                        help = 'Maximum coverage before downsampling nanopolish input (default: %(default)s)')
     assembly_group.add_argument('--albacore-seq-file', required = False, type = str, default = None, metavar = '<ALBACORE_SEQ_FILE>',
-                        help = 'List of albacore sequencing summary files (default : %(default)s)')
+                        help = 'List of albacore sequencing summary files (default: %(default)s)')
     assembly_group.add_argument('--pilon', required = False, default = False, action = 'store_true',
-                        help = 'Run Pilon if Illumina reads are given (default : %(default)s)')
+                        help = 'Run Pilon if Illumina reads are given (default: %(default)s)')
     assembly_group.add_argument('--no-assembly', required = False, default = False, action = 'store_true',
-                        help = 'Don\'t assemble the given reads (default : %(default)s)')
+                        help = 'Don\'t assemble the given reads (default: %(default)s)')
 
 
     # Plasmid options
     plasmid_group = parser.add_argument_group('Plasmid and vector search options')
     plasmid_group.add_argument('--plasmids', required = False, default = False, action = 'store_true',
-                        help = 'Do a plasmid search (default : %(default)s)')
+                        help = 'Do a plasmid search (default: %(default)s)')
     plasmid_group.add_argument('--plasmid-database', required = False, default = plasmid_database_default, metavar = '<PLASMID_FASTA>',
                         help = 'Path to a FASTA file with reference plasmid sequences')
 
@@ -1773,17 +1809,17 @@ if __name__ == '__main__':
     # AMR gene options
     amr_group = parser.add_argument_group('AMR gene search options')
     amr_group.add_argument('--amr-database', required = False, default = amr_database_default, metavar = '<AMR_FASTA>',
-                        help = 'Path to a FASTA file with AMR gene sequences (default : %(default)s)')
+                        help = 'Path to a FASTA file with AMR gene sequences (default: %(default)s)')
     amr_group.add_argument('--no-amr', required = False, default = False, action = 'store_true',
-                        help = 'Skip AMR search (default : %(default)s)')
+                        help = 'Skip AMR search (default: %(default)s)')
 
 
     # Inc group options
     inc_group = parser.add_argument_group('Incompatibility group search options')
     inc_group.add_argument('--inc-database', required = False, default = inc_database_default, metavar = '<INC_FASTA>',
-                        help = 'Path to a FASTA file with incompatibility group sequences (default : %(default)s)')
+                        help = 'Path to a FASTA file with incompatibility group sequences (default: %(default)s)')
     inc_group.add_argument('--no-inc', required = False, default = False, action = 'store_true',
-                        help = 'Skip incompatibility group search (default : %(default)s)')
+                        help = 'Skip incompatibility group search (default: %(default)s)')
 
 
     # Pull in custom feature sets
@@ -1795,7 +1831,7 @@ if __name__ == '__main__':
     # Which organism are we working with here
     organism_group = parser.add_argument_group('Organism options')
     organism_group.add_argument('--reference-dir', required = False, default = reference_dir_default, metavar = '<REFERNCE_DIR>',
-                                help = 'Directory containing refrence organisms (default : %(default)s)' )
+                                help = 'Directory containing refrence organisms (default: %(default)s)' )
     organism_group.add_argument('--organism', required = False, default = None, metavar = '<ORGANISM>',
                         help = 'Reference organism to compare against')
     organism_group.add_argument('--list-organisms', required = False, action = 'store_true',
@@ -1809,11 +1845,11 @@ if __name__ == '__main__':
     # Other arguments
     other_group = parser.add_argument_group('Other options')
     other_group.add_argument('--threads', required = False, type=int, default = 1, metavar = '<NUM_THREADS>',
-                        help = 'Number of worker threads to use (default : %(default)s)')
+                        help = 'Number of worker threads to use (default: %(default)s)')
     other_group.add_argument('--verbosity', required = False, type=int, default = 1, metavar = '<INT>',
-                        help = 'How much information to print as PIMA runs (default : %(default)s)')
+                        help = 'How much information to print as PIMA runs (default: %(default)s)')
     other_group.add_argument('--fake-run', required = False, default = False, action = 'store_true',
-                             help = 'Don\'t actually run the pipeline, just pretend to (default : %(default)s)')
+                             help = 'Don\'t actually run the pipeline, just pretend to (default: %(default)s)')
 
 
     opts, unknown_args = parser.parse_known_args()
@@ -1822,7 +1858,7 @@ if __name__ == '__main__':
     if opts.list_organisms:
         print_organisms()
         sys.exit(0)
-    elif opts.help :
+    elif opts.help:
         print(Colors.HEADER)
         parser.print_help()
         print(Colors.ENDC)
@@ -1830,15 +1866,15 @@ if __name__ == '__main__':
 
     # Start the analysis
     analysis = Analysis(opts, unknown_args)
-
     analysis.validate_options()
 
-    if len(analysis.errors) > 0 :
+    if len(analysis.errors) > 0:
         print(Colors.HEADER)
         parser.print_help()
         print(Colors.ENDC)
         print(Colors.FAIL + '\n\nErrors:')
-        print([(i) for i in analysis.errors])
+        for error_message in analysis.errors:
+            print(error_message)
         print(Colors.ENDC)
         sys.exit()
 
