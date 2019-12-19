@@ -16,7 +16,7 @@ import pandas
 
 pandas.set_option('display.max_colwidth', 200)
 
-VERSION='0.1.3'
+VERSION='0.1.4'
 
 pima_directory = os.path.dirname(os.path.realpath(__file__))
 amr_database_default = os.path.join(pima_directory, 'amr.fasta')
@@ -24,6 +24,7 @@ inc_database_default = os.path.join(pima_directory, 'inc.fasta')
 plasmid_database_default = os.path.join(pima_directory,
     'plasmids_and_vectors.fasta')
 reference_dir_default = os.path.join(pima_directory, 'reference_sequences')
+cpus_default = mp.cpu_count()
 
 class Colors:
     HEADER = '\033[95m'
@@ -133,7 +134,10 @@ class Analysis:
         self.no_reference = opts.no_reference
         self.no_mutations = opts.no_mutations
 
-        self.threads = opts.threads
+        if opts.threads < 1:
+            self.threads = mp.cpu_count()
+        else:
+            self.threads = opts.threads
 
         self.errors = []
 
@@ -156,9 +160,9 @@ class Analysis:
         # The actual steps to carry out in the analysis held as a list
         self.analysis = []
 
-        # See if we got any unknown args.  Not allowed.
+        # Report unknown arguments
         if len(unknown_args) != 0:
-            self.errors += ['Unknown argument: ' + str(u) for u in unknown_args]
+            self.errors += ['Unknown option: ' + str(u) for u in unknown_args]
 
 
     def print_and_log(self, text, verbosity, color = Colors.ENDC):
@@ -1828,7 +1832,7 @@ if __name__ == '__main__':
     # Which organism are we working with here
     organism_group = parser.add_argument_group('Organism options')
     organism_group.add_argument('--reference-dir', required = False, default = reference_dir_default, metavar = '<REFERNCE_DIR>',
-                                help = 'Directory containing refrence organisms (default: %(default)s)' )
+                                help = 'Directory containing reference organisms (default: %(default)s)' )
     organism_group.add_argument('--organism', required = False, default = None, metavar = '<ORGANISM>',
                         help = 'Reference organism to compare against')
     organism_group.add_argument('--list-organisms', required = False, action = 'store_true',
@@ -1841,7 +1845,7 @@ if __name__ == '__main__':
 
     # Other arguments
     other_group = parser.add_argument_group('Other options')
-    other_group.add_argument('--threads', required = False, type=int, default = 1, metavar = '<NUM_THREADS>',
+    other_group.add_argument('--threads', required = False, type=int, default = cpus_default, metavar = '<NUM_THREADS>',
                         help = 'Number of worker threads to use (default: %(default)s)')
     other_group.add_argument('--verbosity', required = False, type=int, default = 1, metavar = '<INT>',
                         help = 'How much information to print as PIMA runs (default: %(default)s)')
@@ -1853,7 +1857,8 @@ if __name__ == '__main__':
     opts.logfile = 'pipeline.log'
 
     if opts.list_organisms:
-        print_organisms()
+        # print_organisms()
+        print('print_organisms() function not yet implemented')
         sys.exit(0)
     elif opts.help:
         print(Colors.HEADER)
@@ -1873,7 +1878,7 @@ if __name__ == '__main__':
         for error_message in analysis.errors:
             print(error_message)
         print(Colors.ENDC)
-        sys.exit()
+        sys.exit(1)
 
-    #If we're still good, start the actual analysis
+    # If no errors, start the system calls
     analysis.go()
