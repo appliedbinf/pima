@@ -1727,16 +1727,13 @@ if __name__ == '__main__':
 
     parser = ArgumentParser(prog = "pima.py",
                             add_help = False,
-                            description =
-                            '''
-                            P.I.M.A. bacterial genome analysis pipeline
-                            ''',
+                            description = 'P.I.M.A. bacterial genome analysis pipeline',
                             formatter_class = lambda prog: HelpFormatter(prog, width = 120, max_help_position = 120))
 
     parser._optionals.title = 'Help and version'
-    parser.add_argument('--help', action = 'store_true',
+    parser.add_argument('-h', '--help', action = 'store_true',
                         help = 'Print this help and exit.')
-    parser.add_argument('--version', action = 'version',
+    parser.add_argument('-V', '--version', action = 'version',
                         help = 'Print the software version.',
                         version = 'PIMA microbial genome analysis pipeline (version {})'.format(VERSION))
 
