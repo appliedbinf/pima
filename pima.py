@@ -16,7 +16,7 @@ import pandas
 
 pandas.set_option('display.max_colwidth', 200)
 
-VERSION='0.1.4'
+VERSION='0.1.5'
 
 pima_directory = os.path.dirname(os.path.realpath(__file__))
 amr_database_default = os.path.join(pima_directory, 'amr.fasta')
@@ -668,7 +668,7 @@ class Analysis:
         for util in ['dnadiff', 'nucmer', 'mummer']:
             self.validate_utility(util)
 
-        #2 - Check for the reference sequence.
+        #2 - Check for the reference sequence
         if not os.path.isdir(self.reference_dir):
             self.errors += ['Can\'t find reference directory ' + self.reference_dir]
 
@@ -680,7 +680,7 @@ class Analysis:
                 if not os.path.isdir(self.organism_dir):
                     self.errors += ['Can\'t find organism directory ' + self.organism_dir]
 
-                #It should be in reference_sequences/organism
+                # It should be in reference_sequences/organism
                 self.reference_fasta = os.path.join(self.organism_dir, 'genome.fasta')
                 if not self.validate_file(self.reference_fasta):
                     self.errors += ['Missing or empty genome.fasta in the reference directory']
@@ -771,13 +771,24 @@ class Analysis:
             self.errors += ['Nothing to do!']
 
 
-    def load_organisms():
-        print('Pretending to load organisms')
+    def print_organisms(self):
+        
+        if self.reference_dir is None:
+            return
 
-    def list_organisms():
-        '''
-        Lists the set of reference organisms available to Pima
-        '''
+        i = 0
+        for _, dirs, _ in os.walk(self.reference_dir):
+            for subdirname in dirs:
+                organism_file = os.path.join(self.reference_dir, subdirname,
+                    'genome.fasta')
+                if self.validate_file(organism_file):
+                    print('Found organism:  {}'.format(subdirname))
+                    i += 1
+                else:
+                    print('Missing or empty genome.fasta file in {}'.format(
+                        os.path.join(self.reference_dir, subdirname)))
+        print('\n{} total reference organisms available'.format(i))
+
 
     def make_output_dir(self):
 
@@ -1856,18 +1867,16 @@ if __name__ == '__main__':
     opts, unknown_args = parser.parse_known_args()
     opts.logfile = 'pipeline.log'
 
+    # Start the analysis
+    analysis = Analysis(opts, unknown_args)
     if opts.list_organisms:
-        # print_organisms()
-        print('print_organisms() function not yet implemented')
+        analysis.print_organisms()
         sys.exit(0)
     elif opts.help:
         print(Colors.HEADER)
         parser.print_help()
         print(Colors.ENDC)
         sys.exit(0)
-
-    # Start the analysis
-    analysis = Analysis(opts, unknown_args)
     analysis.validate_options()
 
     if len(analysis.errors) > 0:
