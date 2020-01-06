@@ -59,6 +59,7 @@ class Analysis :
         self.albacore_seq_files_file = opts.albacore_seq_file
         self.barcode_min_fraction = 2.5
         self.ont_fastq = opts.ont_fastq
+        self.ont_raw_fastq = opts.ont_fastq
         self.ont_fastq_dir = None
         self.only_basecall = opts.only_basecall
         self.multiplexed = opts.multiplexed
@@ -76,7 +77,7 @@ class Analysis :
         self.genome_size = opts.genome_size
         self.racon = opts.racon
         self.racon_rounds = opts.racon_rounds
-        #self.medaka = opts.medaka
+        self.no_medaka = opts.no_medaka
         self.nanopolish = opts.nanopolish
         self.nanopolish_coverage_max = opts.max_nanopolish_coverage
         self.pilon = opts.pilon
@@ -502,6 +503,9 @@ class Analysis :
         
         if not self.will_have_ont_assembly :
             return
+
+        if self.no_medaka :
+            return
         
         self.print_and_log('Validating medaka', self.main_process_verbosity, self.main_process_color)
 
@@ -750,6 +754,7 @@ class Analysis :
         # Run the basecalling with Guppy
         command = ' '.join(['guppy_basecaller',
                     '-i', self.ont_fast5,
+                    '-r',
                     '-s', self.ont_fastq_dir,
                     '--compress-fastq',
                     '--device "cuda:0"',
@@ -920,7 +925,7 @@ class Analysis :
 
         # Make a FASTQish file from the LoRMA output
         self.print_and_log('Converting LoRMA FASTA to a FASTQ', self.sub_process_verbosity, self.sub_process_color)
-        quality = 12
+        quality = 25
         with open(lorma_fasta, 'r') as lorma_fasta_handle, open(lorma_fastq, 'w') as lorma_fastq_handle :
             for fasta in Bio.SeqIO.parse(lorma_fasta_handle, 'fasta') :
                  fasta.letter_annotations['phred_quality'] = [quality] * len(fasta)
@@ -1027,9 +1032,10 @@ class Analysis :
         flye_fasta = flye_output_dir + '/assembly.fasta'
         command = ' '.join(['flye',
                             '--plasmid',
-                            '--asm-coverage 50',
+                            '--asm-coverage 75',
                             '--nano-raw', self.ont_fastq,
-                            #'--nano-corr', self.ont_fastq,
+                            #'--meta',
+                            #'--pacbio-raw', self.ont_fastq,
                             '-g', self.genome_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
@@ -1104,7 +1110,8 @@ class Analysis :
         self.medaka_fasta = os.path.join(self.medaka_dir, 'consensus.fasta')
         medaka_stdout, medaka_stderr = [os.path.join(self.medaka_dir, 'medaka.') + i for i in ['stdout', 'stderr']]
         command = ' '.join(['medaka_consensus',
-                            '-i', self.ont_fastq,
+                            '-m', 'r941_min_high',
+                            '-i', self.ont_raw_fastq,
                             '-d', self.genome_fasta,
                             '-o', self.medaka_dir,
                             '-t', str(self.threads),
@@ -1691,8 +1698,8 @@ if __name__ == '__main__':
                         help = 'Force the generation a racon consenus (default : %(default)s)')
     assembly_group.add_argument('--racon-rounds', required = False, default = 4, type = int, metavar = '<NUM_ROUNDS>',
                         help = 'Number of RACON rounds used to generate a consensus (default : %(default)s)')
-    assembly_group.add_argument('--medaka', required = False, default = False, action = 'store_true',
-                        help = 'Run Medaka on the assembly (faster) (default : %(default)s)')
+    assembly_group.add_argument('--no-medaka', required = False, default = False, action = 'store_true',
+                        help = 'Skip Medaka polising of the ONT assembly (faster) (default : %(default)s)')
     assembly_group.add_argument('--nanopolish', required = False, default = False, action = 'store_true',
                         help = 'Run Nanopolish on the RACON consensus (slow) (default : %(default)s)')
     assembly_group.add_argument('--max-nanopolish-coverage', required = False, type = int, default = 100, metavar = '<MAX_COVERAGE>',
