@@ -81,12 +81,16 @@ class Analysis :
         self.nanopolish = opts.nanopolish
         self.nanopolish_coverage_max = opts.max_nanopolish_coverage
         self.pilon = opts.pilon
-        self.no_assembly = opts.no_assembly
         self.will_have_ont_assembly = False
+
+        # The assembly itself
+        self.genome = pandas.Series()
         
         # Plasmid and feature options
-        self.plasmid_database = opts.plasmid_database
         self.plasmids = opts.plasmids
+        self.plasmid_database = opts.plasmid_database
+
+        self.no_drawing = opts.no_drawing
 
         self.amr_database = opts.amr_database
         self.no_amr = opts.no_amr
@@ -170,6 +174,18 @@ class Analysis :
             self.print_and_log(' '.join([error_prefix, the_file, size_suffix]), 0, Colors.FAIL)
             self.error_out()
 
+
+    def validate_utility(self, utility, error) :
+        if not shutil.which(utility) :
+            self.errors += [error]
+            return False
+
+            
+    def load_genome(self) :
+        self.genome = pandas.Series()
+        for contig in Bio.SeqIO.parse(self.genome_fasta, 'fasta') :
+            self.genome[contig.id] = contig
+
             
     def minimap_ont_fastq(self, genome, fastq, bam) :
         command = ' '.join(['minimap2 -a',
@@ -219,12 +235,6 @@ class Analysis :
                             '2>' + bwa_stderr])
         self.print_and_run(command)
         
-        
-    def validate_utility(self, utility, error) :
-        if not shutil.which(utility) :
-            self.errors += [error]
-            return False
-
         
     def error_out(self) :
         exit(1)
@@ -300,6 +310,7 @@ class Analysis :
             self.errors += ['Input genome FASTA ' + self.genome_fasta + ' cannot be found']
         self.will_have_genome_fasta = True
 
+        self.analysis += ['load_genome']
             
     def validate_output_dir(self) :
         if not opts.output :
@@ -406,9 +417,6 @@ class Analysis :
         if self.assembler != 'miniasm' :
             return
         
-        if self.no_assembly :
-            return
-        
         if not self.ont_fast5 and not self.ont_fastq :
             self.errors += ['Miniasm assembly requires --ont-fast5 and/or --ont-fastq']
         
@@ -431,9 +439,6 @@ class Analysis :
         if self.assembler != 'wtdbg2' :
             return
 
-        if self.no_assembly :
-            return
-        
         if not (self.ont_fast5 or self.ont_fastq) :
             return
         
@@ -682,6 +687,15 @@ class Analysis :
 
         self.analysis = self.analysis + ['call_plasmids']
 
+    
+    @unless_only_basecall
+    def validate_draw_features(self) :
+        
+        if  self.no_drawing :
+            return
+
+        self.analysis += ['draw_features']
+
             
     def validate_options(self) :
 
@@ -715,6 +729,7 @@ class Analysis :
         self.validate_reference()
         self.validate_mutations()
         self.validate_plasmids()
+        self.validate_draw_features()
 
         if len(self.analysis) == 0 :
             self.errors = self.errors + ['Nothing to do!']
@@ -1032,9 +1047,9 @@ class Analysis :
         flye_fasta = flye_output_dir + '/assembly.fasta'
         command = ' '.join(['flye',
                             '--plasmid',
-                            '--asm-coverage 75',
+                            '--asm-coverage 150',
                             '--nano-raw', self.ont_fastq,
-                            #'--meta',
+                            '--meta',
                             #'--pacbio-raw', self.ont_fastq,
                             '-g', self.genome_size,
                             '--out-dir', flye_output_dir,
@@ -1048,7 +1063,8 @@ class Analysis :
         self.genome_fasta = self.ont_assembly_dir + '/assembly.fasta'
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome fasta', 'cannot be found after copying Flye output', 'is empty')
 
-        
+        self.load_genome()
+
     def racon_ont_assembly(self) :
 
         self.racon_dir = os.path.join(self.output_dir, 'racon')
@@ -1097,6 +1113,7 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
 
+        self.load_genome()
         
     def medaka_ont_assembly(self) :
 
@@ -1128,7 +1145,9 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
         
-        
+        self.load_genome()
+
+
     def nanopolish_ont_assembly(self) :
 
         self.print_and_log('Running Nanopolish on ONT assembly', self.main_process_verbosity, self.main_process_color)
@@ -1227,7 +1246,9 @@ class Analysis :
         self.validate_file_and_size_or_error(self.nanopolish_fasta, 'Nanpolish FASTA', 'cannot be found after samtools', 'is empty')
         self.genome_fasta = self.nanopolish_fasta
 
+        self.load_genome()
         
+
     def run_nanopolish_range(self, nanopolish_range) :
         print(nanopolish_range)
         nanopolish_vcf = self.nanopolish_prefix + '.' + nanopolish_range + '.vcf'
@@ -1275,6 +1296,7 @@ class Analysis :
         self.genome_fasta = assembly_fasta
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after SPAdes', 'is empty')
 
+        self.load_genome()
         
     def spades_illumina_fastq(self) :
 
@@ -1331,22 +1353,26 @@ class Analysis :
         
         self.genome_fasta = self.pilon_fasta
 
+        self.load_genome()
+
 
     def blast_feature_sets(self) :
 
         self.features_dir = os.path.join(self.output_dir, 'features')
         os.makedirs(self.features_dir)
         
+        self.feature_hits = pandas.Series()
+
         for feature_number in range(len(self.feature_fastas)) :
             feature_fasta = self.feature_fastas[feature_number]
             feature_name = re.sub('\\.f.*', '', os.path.basename(feature_fasta))
             feature_dir = os.path.join(self.features_dir, feature_name)
-            self.blast_features(feature_fasta, feature_dir)
+            self.blast_features(feature_fasta, feature_dir, feature_name)
             self.feature_dirs += [feature_dir]
             self.feature_names += [feature_name]
         
         
-    def blast_features(self, feature_fasta, feature_dir) :
+    def blast_features(self, feature_fasta, feature_dir, feature_name) :
         
         # Make a directory for the new features
         os.makedirs(feature_dir)
@@ -1404,6 +1430,10 @@ class Analysis :
                             '| sort -k 1,1 -k2,2n',
                             '>' + best_bed])
         self.print_and_run(command)
+
+        # Keep the feature hits for later drawing
+        best = pandas.read_csv(filepath_or_buffer = best_bed)
+        self.feature_hits[feature_name] = best
 
             
     def call_amr_mutations(self) :
@@ -1582,7 +1612,7 @@ class Analysis :
                             '>', genome_aligned_bed])
         self.print_and_run(command)
 
-        # Find the unaligned regions
+        # Find the unaligned regions.  These are our insertions and deletions
         reference_sizes = os.path.join(self.insertions_dir, 'reference.sizes')
         reference_insertions_bed = os.path.join(self.insertions_dir, 'reference_insertions.bed')
         genome_sizes = os.path.join(self.insertions_dir, 'genome.sizes')
@@ -1596,24 +1626,42 @@ class Analysis :
         command = ' '.join(['bedtools complement',
                             '-i', reference_aligned_bed,
                             '-g', reference_sizes,
-                            '| awk \'($3 - $2 >= 100){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
+                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
                             '>', reference_insertions_bed])
         self.print_and_run(command)
-        
+        self.reference_insertions = pandas.read_csv(filepath_or_buffer = reference_insertions_bed)
+
         command = ' '.join(['bedtools complement',
                             '-i', genome_aligned_bed,
                             '-g', genome_sizes,
-                            '| awk \'($3 - $2 >= 100){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
+                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
                             '>', genome_insertions_bed])
         self.print_and_run(command)
+        self.genome_insertions = pandas.read_csv(filepath_or_buffer = genome_insertions_bed)
 
 
+    def draw_features(self) :
+
+        self.print_and_log('Drawing features', self.main_process_verbosity, self.main_process_color)
+
+        self.drawing_dir = os.path.join(self.output_dir, 'drawing')
+        os.mkdir(self.drawing_dir)
+
+        # Draw one plot per contig for simplicity
+        for contig in self.genome :
+            print(contig.id)
+            
+            for feature_name in self.feature_hits.index.to_list() :
+                print(feature_name)
+                
+        
     def clean_up(self) :
 
         if (self.genome_fasta) :
             final_fasta = os.path.join(self.output_dir, 'assembly.fasta')
             command = ' '.join(['cp', self.genome_fasta, final_fasta])
             self.print_and_run(command)
+
             
     def go(self) :
 
@@ -1742,6 +1790,12 @@ if __name__ == '__main__':
                                      help = 'Path to a FASTA file with feature sequences')
     
     
+    # Drawing options
+    drawing_group = parser.add_argument_group('Drawing options')
+    drawing_group.add_argument('--no-drawing', required = False, default = False, action = 'store_true',
+                                     help = 'Skip drawing of contigs & Features (default : %(default)s)')
+
+
     # Which organism are we working with here
     organism_group = parser.add_argument_group('Organism options')
     organism_group.add_argument('--reference-dir', required = False, default = reference_dir_default, metavar = '<REFERNCE_DIR>',
