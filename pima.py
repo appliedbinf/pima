@@ -20,6 +20,8 @@ import joblib
 import Bio.SeqIO
 import pathos.multiprocessing as mp
 
+from dna_features_viewer import GraphicFeature, GraphicRecord
+import matplotlib.pyplot as plt
 
 pandas.set_option('display.max_colwidth', 200)
 
@@ -29,7 +31,9 @@ VERSION=1.0
 
 pima_path = os.path.dirname(os.path.realpath(__file__))
 amr_database_default = f"{pima_path}/data/amr.fasta"
+amr_default_color = '#FED976'
 inc_database_default = f"{pima_path}/data/inc.fasta"
+inc_default_color = '#0570B0'
 plasmid_database_default = f"{pima_path}/data/plasmids_and_vectors.fasta"
 reference_dir_default = f"{pima_path}/reference_sequences"
 
@@ -574,9 +578,11 @@ class Analysis :
             
         if not self.no_amr :
             self.feature_fastas += [self.amr_database]
+            self.feature_colors += [amr_default_color]
 
         if not self.no_inc :
             self.feature_fastas += [self.inc_database]
+            self.feature_colors += [inc_default_color]
             
         if len(self.feature_fastas) == 0 :
             return
@@ -1432,7 +1438,7 @@ class Analysis :
         self.print_and_run(command)
 
         # Keep the feature hits for later drawing
-        best = pandas.read_csv(filepath_or_buffer = best_bed)
+        best = pandas.read_csv(filepath_or_buffer = best_bed, sep = '\t', header = None)
         self.feature_hits[feature_name] = best
 
             
@@ -1577,7 +1583,7 @@ class Analysis :
         self.print_and_run(command)
         self.plasmid_tsv = new_plasmid_tsv
         
-        self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t')
+        self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t', header = None)
 
         
     def call_insertions(self) :
@@ -1629,7 +1635,7 @@ class Analysis :
                             '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
                             '>', reference_insertions_bed])
         self.print_and_run(command)
-        self.reference_insertions = pandas.read_csv(filepath_or_buffer = reference_insertions_bed)
+        self.reference_insertions = pandas.read_csv(filepath_or_buffer = reference_insertions_bed, sep = '\t', header = None)
 
         command = ' '.join(['bedtools complement',
                             '-i', genome_aligned_bed,
@@ -1637,7 +1643,7 @@ class Analysis :
                             '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
                             '>', genome_insertions_bed])
         self.print_and_run(command)
-        self.genome_insertions = pandas.read_csv(filepath_or_buffer = genome_insertions_bed)
+        self.genome_insertions = pandas.read_csv(filepath_or_buffer = genome_insertions_bed, sep = '\t', header = None)
 
 
     def draw_features(self) :
@@ -1646,14 +1652,66 @@ class Analysis :
 
         self.drawing_dir = os.path.join(self.output_dir, 'drawing')
         os.mkdir(self.drawing_dir)
+        figure_width = 13
 
         # Draw one plot per contig for simplicity
         for contig in self.genome :
-            print(contig.id)
             
-            for feature_name in self.feature_hits.index.to_list() :
-                print(feature_name)
+            contig_plot_pdf = os.path.join(self.drawing_dir, contig.id + '.pdf')
+            
+            feature_sets_to_plot = pandas.Series()
+            
+            for feature_number in range(len(self.feature_hits)) :
+                feature_name = self.feature_hits.index.to_list()[feature_number]
+                these_features = self.feature_hits[feature_name]
+
+                contig_features = these_features.loc[these_features.iloc[:,0] == contig.id, :]
+                if (contig_features.shape[0] == 0) :
+                    continue
+                    
+                features_to_plot =[]
                 
+                for i in range(contig_features.shape[0]) :
+                    i = contig_features.iloc[i, :]
+                    features_to_plot += [GraphicFeature(start = i[1], end = i[2], label = i[3], strand = 1*i[5], color = self.feature_colors[feature_number])]
+                    
+                feature_sets_to_plot[feature_name] = features_to_plot
+                
+            # Figure out high each plot will be on its own for later scaling
+            expected_plot_heights = []
+            for i in range(len(feature_sets_to_plot)) :
+                record = GraphicRecord(sequence_length = len(contig), features = feature_sets_to_plot[i])
+
+                with_ruler  = False
+                if i == len(feature_sets_to_plot) - 1 :
+                    with_ruler = True
+
+                plot, _ = record.plot(figure_width = figure_width, with_ruler = with_ruler)
+                expected_plot_heights += [plot.figure.get_size_inches()[1]]
+                
+            plot_height_sum = sum(expected_plot_heights)
+
+            # Make a figure with separate plots for each feature class
+            plots = plt.subplots(nrows = len(feature_sets_to_plot), ncols = 1, sharex = True,
+                                 figsize=(figure_width, plot_height_sum), gridspec_kw={"height_ratios": expected_plot_heights})
+            figure = plots[0]
+            plots = plots[1]
+            if len(feature_sets_to_plot) == 1: 
+                plots = [plots]
+
+            # Add each feature class's plot with the pre-determined height
+            for i in range(len(feature_sets_to_plot)) :
+                record = GraphicRecord(sequence_length = len(contig), features = feature_sets_to_plot[i])
+
+                with_ruler  = False
+                if i == len(feature_sets_to_plot) - 1 :
+                    with_ruler = True
+                    
+                plot = record.plot(ax = plots[i], with_ruler = with_ruler, figure_width = figure_width)
+                
+            figure.tight_layout()
+            figure.savefig(contig_plot_pdf)
+
         
     def clean_up(self) :
 
