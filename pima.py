@@ -303,19 +303,26 @@ class Analysis :
     def validate_ont_fastq(self):
         if not self.ont_fastq :
             return
+
+        self.print_and_log('Validating ONT FASTQ', self.main_process_verbosity, self.main_process_color)
+
         if not os.path.isfile(self.ont_fastq) :
-            self.errors += ['Input FASTQ file ' + self.ont_fastq + ' cannot be found']
+            self.errors += ['Input ONT FASTQ file ' + self.ont_fastq + ' cannot be found']
 
             
     def validate_genome_fasta(self) :
         if not self.genome_fasta :
             return
+
+        self.print_and_log('Validating genome FASTA', self.main_process_verbosity, self.main_process_color)
+
         if not os.path.isfile(self.genome_fasta) :
             self.errors += ['Input genome FASTA ' + self.genome_fasta + ' cannot be found']
         self.will_have_genome_fasta = True
 
         self.analysis += ['load_genome']
             
+
     def validate_output_dir(self) :
         if not opts.output :
             self.errors += ['No output directory given (--output)']
@@ -1693,7 +1700,7 @@ class Analysis :
 
             # Make a figure with separate plots for each feature class
             plots = plt.subplots(nrows = len(feature_sets_to_plot), ncols = 1, sharex = True,
-                                 figsize=(figure_width, plot_height_sum), gridspec_kw={"height_ratios": expected_plot_heights})
+                                 figsize=(figure_width, plot_height_sum * .66666), gridspec_kw={"height_ratios": expected_plot_heights})
             figure = plots[0]
             plots = plots[1]
             if len(feature_sets_to_plot) == 1: 
@@ -1707,7 +1714,11 @@ class Analysis :
                 if i == len(feature_sets_to_plot) - 1 :
                     with_ruler = True
                     
-                plot = record.plot(ax = plots[i], with_ruler = with_ruler, figure_width = figure_width)
+                plot, _ = record.plot(ax = plots[i], with_ruler = with_ruler, figure_width = figure_width)
+                ymin, ymax = plot.figure.axes[0].get_ylim()
+
+                if i == 0 : 
+                    plot.text(x = 0, y = ymax, s = contig.id) 
                 
             figure.tight_layout()
             figure.savefig(contig_plot_pdf)
