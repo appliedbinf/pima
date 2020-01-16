@@ -220,7 +220,7 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(bam)
         self.index_bam(bam)
-        
+
         
     def index_bam(self, bam) :
         command = ' '.join(['samtools index',
@@ -689,7 +689,7 @@ class Analysis :
 
         self.print_and_log('Validating plasmid database and utilities', self.main_process_verbosity, self.main_process_color)
         
-        for utility in ['pblat', 'Rscript', 'R', 'pChunks.R'] :
+        for utility in ['minimap2', 'Rscript', 'R', 'pChunks.R'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
         
         if not os.path.isfile(self.plasmid_database) :
@@ -1551,37 +1551,52 @@ class Analysis :
 
         # Take very large things out of the assembly.  They aren't plasmids and take a long time to run
         self.print_and_log('Finding contigs < 500000 bp', self.sub_process_verbosity, self.sub_process_color)
-        self.smaller_contigs_fasta = os.path.join(self.plasmid_dir, 'small_contigs.fasta')
+        smaller_contigs_fasta = os.path.join(self.plasmid_dir, 'small_contigs.fasta')
         command = ' '.join(['faidx -i chromsizes', self.genome_fasta,
                             '| awk \'($2 <= 500000){print $1}\'',
-                            '| parallel -n1 -n1 faidx', self.genome_fasta, '>', self.smaller_contigs_fasta])
+                            '| parallel -n1 -n1 faidx', self.genome_fasta, '>', smaller_contigs_fasta])
         self.print_and_run(command)
+        self.validate_file_and_size_or_error(smaller_contigs_fasta, 'Region plain text MPILEUP file', 'cannot be found', 'is empty')
                                     
-        # Query plasmid sequences against the assembly
-        self.print_and_log('Running PBLAT against the plasmid database', self.sub_process_verbosity, self.sub_process_color)
-        self.plasmid_psl = os.path.join(self.plasmid_dir, 'plasmid_hits.psl')
-        stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'pblat.' + i) for i in ['stdout', 'stderr']]
-        command = ' '.join(['pblat -noHead -tileSize=15',
-                            '-minIdentity=97',
-                            '-threads=' + str(self.threads),
-                            self.smaller_contigs_fasta, self.plasmid_database, self.plasmid_psl,
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
+        # Query plasmid sequences against the assembly using minimap2
+        self.print_and_log('Running minimap2 against the plasmid database', self.sub_process_verbosity, self.sub_process_color)
+        plasmid_sam = os.path.join(self.plasmid_dir, 'plasmid_hits.sam')
+        stderr_file = os.path.join(self.plasmid_dir, 'minimap.stderr')
+        command = ' '.join(['minimap2',
+                            '-k 20 -p .333 -a',
+                            '-t', str(self.threads),
+                            self.genome_fasta,
+                            self.plasmid_database,
+                            '1>', plasmid_sam, '2>', stderr_file])
         self.print_and_run(command)
-
+        self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig SAM', 'cannot be found', 'is empty')
+        
+        # Turn the SAM file in to a PSL file using the modified sam2psl script
+        self.print_and_log('Converting the SAM file to a PSL file', self.sub_process_verbosity, self.sub_process_color)
+        plasmid_psl = os.path.join(self.plasmid_dir, 'plasmid_hits.psl')
+        stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'sam2psl.' + i) for i in ['stdout', 'stderr']]
+        command = ' '.join(['sam2psl.py',
+                            '-i', plasmid_sam,
+                            '-o', plasmid_psl,
+                            '1>', stdout_file, '>2', stderr_file])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig PSL', 'cannot be found', 'is empty')
+        
         # Pass the data onto pChunks
         self.print_and_log('Running pChunks', self.sub_process_verbosity, self.sub_process_color)
         self.pchunks_dir = os.path.join(self.plasmid_dir, 'pChunks')
         os.makedirs(self.pchunks_dir)
+        
+        self.plasmid_tsv = os.path.join(self.pchunks_dir, 'plasmids.tsv')
         stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'pChunks.' + i) for i in ['stdout', 'stderr']]
-        command = ' '.join(['pChunks.R', '--plasmid-psl', self.plasmid_psl,
+        command = ' '.join(['pChunks.R', '--plasmid-psl', plasmid_psl,
                             '--output', self.pchunks_dir,
                             '--no-amr', '--no-inc',
                             '--plasmid-database', self.plasmid_database,
                             '--threads', str(self.threads),
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
+                            '1>' + stdout_file, '2>' + stderr_file])
         self.print_and_run(command)
+        self.validate_file_and_size_or_error(self.plasmid_tsv, 'Plasmid output table', 'cannot be found', 'is empty')
 
         # The final file is in pChunks
         self.plasmid_tsv = os.path.join(self.pchunks_dir, 'plasmids.tsv')
