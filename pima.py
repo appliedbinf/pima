@@ -1444,9 +1444,12 @@ class Analysis :
                             '>' + best_bed])
         self.print_and_run(command)
 
-        # Keep the feature hits for later drawing
-        best = pandas.read_csv(filepath_or_buffer = best_bed, sep = '\t', header = None)
-        self.feature_hits[feature_name] = best
+        # Keep the feature hits for later drawing.  It may be empty, i.e., no feature hits
+        try :
+            best = pandas.read_csv(filepath_or_buffer = best_bed, sep = '\t', header = None)
+            self.feature_hits[feature_name] = best
+        except :
+            return
 
             
     def call_amr_mutations(self) :
