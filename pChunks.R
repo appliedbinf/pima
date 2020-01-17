@@ -205,7 +205,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     
     #Pull just the plasmids out of the larget set of hits, i.e, make sure it has the word 'plasmid' in the description.
     plasmidHits = plasmidHits[grep('plasmid|vector', plasmidHits[,'targetNames'], ignore.case = TRUE), ,drop = FALSE]
-    plasmidHits = plasmidHits[!grepl('tig0000', plasmidHits[,'targetNames'], ignore.case = TRUE), , drop = FALSE]
+    plasmidHits = plasmidHits[!grepl('tig0000|unnamed', plasmidHits[,'targetNames'], ignore.case = TRUE), , drop = FALSE]
     printif(paste("Sequece-plasmid hits after screening by name:", paste(dim(plasmidHits), collapse = 'x')), verbosity > 1)
 
     ## Stop if there is nothing left
@@ -383,7 +383,18 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
         if (!is.null(searchDepth) && plasmidNumber <= length(searchDepth)) {
             plasmidToUse = searchDepth[plasmidNumber]
         }
+        print('Start')
+        print(paste('Plasmid number', plasmidNumber))
+        print(paste('Plasmid to use', plasmidToUse))
+        print(plasmidScores)
+        if (plasmidToUse > length(plasmidScores)) {
+            plasmidToUse = length(plasmidScores)
+        }
+        print(paste('Plasmid to use', plasmidToUse))
+
+                      
         plasmid = names(plasmidScores)[plasmidToUse]
+        print(paste('Plasmid picked', plasmid))
         totalPlasmidScore = totalPlasmidScore + plasmidScores[plasmid]
         printif(paste("Pulling sequences for", plasmid), verbosity > 0)
         
