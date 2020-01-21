@@ -184,7 +184,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     }
 
     
-    ## Pull the full plasmid names from the blast database because BLAT/minimap2 doesm't report them, just the ID's
+    ## Pull the full plasmid names from the blast database because BLAT/minimap2 doesn't report them, just the ID's
     targetIDs = plasmidHits[,'target']
     targetIDs = gsub("\\|$", "", targetIDs)
     targetIDs = gsub(".*(\\|.*)$", "\\1", targetIDs)
@@ -224,7 +224,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     plasmidNames = gsub(', contig.*', '', plasmidNames)
     plasmidNames = gsub(', partial.*', '', plasmidNames)
     plasmidNames = gsub('strain ', '', plasmidNames)
-    #plasmidNames = gsub('plasmid ', '', plasmidNames)
     plasmidNames = gsub('^ *', '', plasmidNames)
     plasmidNames = sub('^(cl\\|)(.*?) ', '', plasmidNames)
     plasmidNames = sub('subsp. (.*?) ', '', plasmidNames)
@@ -240,7 +239,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     ## Find the set of plasmid coverage hits for each itteration
     usedContigs = c()
     plasmidMismatches = c()
-
 
     ## Order hits by the plasmid ID and the query length
     plasmidHits = plasmidHits[order(plasmidHits[,'target'], -plasmidHits[,'qlength']), ]
@@ -310,12 +308,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
                 plasmidMismatches[target] = 0
             }
             
-
-            ## Keep track of how much of each plasmid is covered by ALL of the contigs in the current set of hits
-            #if (plasmidHits[i,'strand'] == '-') { #Flip stupid reverse strand
-            #    targetStarts = rev(plasmidHits[i,'tlength'] - targetStarts) - rev(blockSizes)
-            #}
-
             penalized = FALSE
             for (j in 1:length(blockSizes)) {
 
@@ -338,11 +330,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
 
                 plasmidCoverage[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0] = 1
                 contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] = 1
-                if (target %in% c('NC_019389.1', 'KT896504.1')) {
-                    cat(paste(target, query, targetStarts[j], blockSizes[j], sum(plasmidCoverage[[target]]), sum(contigCoverage[[query]][[target]]), '\n', sep = '\t'))
-                }
-
-                
             }
 
             ## Relate this plasmid to this contig
@@ -352,8 +339,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
                 plasmidToContig[[target]][[query]] = plasmidToContig[[target]][[query]] + score
             }
         }
-
-
         
         ## Get the best set of plasmids out, i.e., the set with the most bases matching between the contig and plasmid
         plasmidScores = c()
@@ -422,7 +407,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
 
         ## How many bases from the plasmid are uncovered?
         plasmidMissing = rep(sum(plasmidCoverageWithRepeats[[as.character(plasmidID)]] == 0), nrow(plasmidRows))
-        
 
         ## Keep track of all of the contigs included
         usedContigs = c(usedContigs, unusedContigs)
