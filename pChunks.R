@@ -368,15 +368,9 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
         if (!is.null(searchDepth) && plasmidNumber <= length(searchDepth)) {
             plasmidToUse = searchDepth[plasmidNumber]
         }
-        print('Start')
-        print(paste('Plasmid number', plasmidNumber))
-        print(paste('Plasmid to use', plasmidToUse))
-        print(plasmidScores)
         if (plasmidToUse > length(plasmidScores)) {
             plasmidToUse = length(plasmidScores)
         }
-        print(paste('Plasmid to use', plasmidToUse))
-
                       
         plasmid = names(plasmidScores)[plasmidToUse]
         print(paste('Plasmid picked', plasmid))
