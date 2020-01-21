@@ -44,6 +44,7 @@ conda env create -f pima.yml
 ## Dependencies
 
 ### Software
+* BCFtools & Samtools: http://www.htslib.org/
 * bedtools: https://bedtools.readthedocs.io/en/latest/
 * NCBI BLAST+ (v 2.8+): https://blast.ncbi.nlm.nih.gov/Blast.cgi
 * bwa: https://github.com/lh3/bwa
@@ -65,3 +66,15 @@ conda env create -f pima.yml
 ### Python modules and programs
 
 
+## Literature Citations
+- McLaughlin HP, Bugrysheva JV, Conley AB, Gulvik CA, Kolton CB, Marston C, Swaney E, Lonsway DR, Cherney B, Gargis AS, Kongphet-Tran T, Lascols C, Michel P, Villanueva J, Hoffmaster ER, Gee JE, Sue D. 2020. When minutes matter: rapid nanopore whole genome sequencing for anthrax emergency preparedness. Emerging Infectious Diseases
+- [BCFtools and SAMtools](https://www.ncbi.nlm.nih.gov/pubmed/19505943)
+- [BEDTools](https://www.ncbi.nlm.nih.gov/pubmed/25199790)
+- [BLAST+](https://www.ncbi.nlm.nih.gov/pubmed/20003500)
+- [GNU parallel](https://www.usenix.org/publications/login/february-2011-volume-36-number-1/gnu-parallel-command-line-power-tool)
+- [Flye](https://www.ncbi.nlm.nih.gov/pubmed/30936562)
+- [miniasm and minimap2](https://www.ncbi.nlm.nih.gov/pubmed/27153593)
+- [MUMmer](https://www.ncbi.nlm.nih.gov/pubmed/14759262)
+- [racon](https://www.ncbi.nlm.nih.gov/pubmed/28100585)
+- [SPAdes](https://www.ncbi.nlm.nih.gov/pubmed/22506599)
+- [Wtdbg2](https://www.nature.com/articles/s41592-019-0669-3)
