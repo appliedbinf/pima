@@ -20,6 +20,8 @@ import joblib
 import Bio.SeqIO
 import pathos.multiprocessing as mp
 
+from dna_features_viewer import GraphicFeature, GraphicRecord
+import matplotlib.pyplot as plt
 
 pandas.set_option('display.max_colwidth', 200)
 
@@ -29,7 +31,9 @@ VERSION=1.0
 
 pima_path = os.path.dirname(os.path.realpath(__file__))
 amr_database_default = f"{pima_path}/data/amr.fasta"
+amr_default_color = '#FED976'
 inc_database_default = f"{pima_path}/data/inc.fasta"
+inc_default_color = '#0570B0'
 plasmid_database_default = f"{pima_path}/data/plasmids_and_vectors.fasta"
 reference_dir_default = f"{pima_path}/reference_sequences"
 
@@ -81,12 +85,16 @@ class Analysis :
         self.nanopolish = opts.nanopolish
         self.nanopolish_coverage_max = opts.max_nanopolish_coverage
         self.pilon = opts.pilon
-        self.no_assembly = opts.no_assembly
         self.will_have_ont_assembly = False
+
+        # The assembly itself
+        self.genome = pandas.Series()
         
         # Plasmid and feature options
-        self.plasmid_database = opts.plasmid_database
         self.plasmids = opts.plasmids
+        self.plasmid_database = opts.plasmid_database
+
+        self.no_drawing = opts.no_drawing
 
         self.amr_database = opts.amr_database
         self.no_amr = opts.no_amr
@@ -170,6 +178,18 @@ class Analysis :
             self.print_and_log(' '.join([error_prefix, the_file, size_suffix]), 0, Colors.FAIL)
             self.error_out()
 
+
+    def validate_utility(self, utility, error) :
+        if not shutil.which(utility) :
+            self.errors += [error]
+            return False
+
+            
+    def load_genome(self) :
+        self.genome = pandas.Series()
+        for contig in Bio.SeqIO.parse(self.genome_fasta, 'fasta') :
+            self.genome[contig.id] = contig
+
             
     def minimap_ont_fastq(self, genome, fastq, bam) :
         command = ' '.join(['minimap2 -a',
@@ -200,7 +220,7 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(bam)
         self.index_bam(bam)
-        
+
         
     def index_bam(self, bam) :
         command = ' '.join(['samtools index',
@@ -219,12 +239,6 @@ class Analysis :
                             '2>' + bwa_stderr])
         self.print_and_run(command)
         
-        
-    def validate_utility(self, utility, error) :
-        if not shutil.which(utility) :
-            self.errors += [error]
-            return False
-
         
     def error_out(self) :
         exit(1)
@@ -289,18 +303,26 @@ class Analysis :
     def validate_ont_fastq(self):
         if not self.ont_fastq :
             return
+
+        self.print_and_log('Validating ONT FASTQ', self.main_process_verbosity, self.main_process_color)
+
         if not os.path.isfile(self.ont_fastq) :
-            self.errors += ['Input FASTQ file ' + self.ont_fastq + ' cannot be found']
+            self.errors += ['Input ONT FASTQ file ' + self.ont_fastq + ' cannot be found']
 
             
     def validate_genome_fasta(self) :
         if not self.genome_fasta :
             return
+
+        self.print_and_log('Validating genome FASTA', self.main_process_verbosity, self.main_process_color)
+
         if not os.path.isfile(self.genome_fasta) :
             self.errors += ['Input genome FASTA ' + self.genome_fasta + ' cannot be found']
         self.will_have_genome_fasta = True
 
+        self.analysis += ['load_genome']
             
+
     def validate_output_dir(self) :
         if not opts.output :
             self.errors += ['No output directory given (--output)']
@@ -406,9 +428,6 @@ class Analysis :
         if self.assembler != 'miniasm' :
             return
         
-        if self.no_assembly :
-            return
-        
         if not self.ont_fast5 and not self.ont_fastq :
             self.errors += ['Miniasm assembly requires --ont-fast5 and/or --ont-fastq']
         
@@ -431,9 +450,6 @@ class Analysis :
         if self.assembler != 'wtdbg2' :
             return
 
-        if self.no_assembly :
-            return
-        
         if not (self.ont_fast5 or self.ont_fastq) :
             return
         
@@ -569,9 +585,11 @@ class Analysis :
             
         if not self.no_amr :
             self.feature_fastas += [self.amr_database]
+            self.feature_colors += [amr_default_color]
 
         if not self.no_inc :
             self.feature_fastas += [self.inc_database]
+            self.feature_colors += [inc_default_color]
             
         if len(self.feature_fastas) == 0 :
             return
@@ -671,7 +689,7 @@ class Analysis :
 
         self.print_and_log('Validating plasmid database and utilities', self.main_process_verbosity, self.main_process_color)
         
-        for utility in ['pblat', 'Rscript', 'R', 'pChunks.R'] :
+        for utility in ['minimap2', 'Rscript', 'R', 'pChunks.R'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
         
         if not os.path.isfile(self.plasmid_database) :
@@ -681,6 +699,15 @@ class Analysis :
             self.errors += ['Can\'t call plasmids without a genome or an assembly']
 
         self.analysis = self.analysis + ['call_plasmids']
+
+    
+    @unless_only_basecall
+    def validate_draw_features(self) :
+        
+        if  self.no_drawing :
+            return
+
+        self.analysis += ['draw_features']
 
             
     def validate_options(self) :
@@ -715,6 +742,7 @@ class Analysis :
         self.validate_reference()
         self.validate_mutations()
         self.validate_plasmids()
+        self.validate_draw_features()
 
         if len(self.analysis) == 0 :
             self.errors = self.errors + ['Nothing to do!']
@@ -1032,9 +1060,9 @@ class Analysis :
         flye_fasta = flye_output_dir + '/assembly.fasta'
         command = ' '.join(['flye',
                             '--plasmid',
-                            '--asm-coverage 75',
+                            '--asm-coverage 150',
                             '--nano-raw', self.ont_fastq,
-                            #'--meta',
+                            '--meta',
                             #'--pacbio-raw', self.ont_fastq,
                             '-g', self.genome_size,
                             '--out-dir', flye_output_dir,
@@ -1048,7 +1076,8 @@ class Analysis :
         self.genome_fasta = self.ont_assembly_dir + '/assembly.fasta'
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome fasta', 'cannot be found after copying Flye output', 'is empty')
 
-        
+        self.load_genome()
+
     def racon_ont_assembly(self) :
 
         self.racon_dir = os.path.join(self.output_dir, 'racon')
@@ -1097,6 +1126,7 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
 
+        self.load_genome()
         
     def medaka_ont_assembly(self) :
 
@@ -1128,7 +1158,9 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
         
-        
+        self.load_genome()
+
+
     def nanopolish_ont_assembly(self) :
 
         self.print_and_log('Running Nanopolish on ONT assembly', self.main_process_verbosity, self.main_process_color)
@@ -1227,7 +1259,9 @@ class Analysis :
         self.validate_file_and_size_or_error(self.nanopolish_fasta, 'Nanpolish FASTA', 'cannot be found after samtools', 'is empty')
         self.genome_fasta = self.nanopolish_fasta
 
+        self.load_genome()
         
+
     def run_nanopolish_range(self, nanopolish_range) :
         print(nanopolish_range)
         nanopolish_vcf = self.nanopolish_prefix + '.' + nanopolish_range + '.vcf'
@@ -1275,6 +1309,7 @@ class Analysis :
         self.genome_fasta = assembly_fasta
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after SPAdes', 'is empty')
 
+        self.load_genome()
         
     def spades_illumina_fastq(self) :
 
@@ -1331,22 +1366,26 @@ class Analysis :
         
         self.genome_fasta = self.pilon_fasta
 
+        self.load_genome()
+
 
     def blast_feature_sets(self) :
 
         self.features_dir = os.path.join(self.output_dir, 'features')
         os.makedirs(self.features_dir)
         
+        self.feature_hits = pandas.Series()
+
         for feature_number in range(len(self.feature_fastas)) :
             feature_fasta = self.feature_fastas[feature_number]
             feature_name = re.sub('\\.f.*', '', os.path.basename(feature_fasta))
             feature_dir = os.path.join(self.features_dir, feature_name)
-            self.blast_features(feature_fasta, feature_dir)
+            self.blast_features(feature_fasta, feature_dir, feature_name)
             self.feature_dirs += [feature_dir]
             self.feature_names += [feature_name]
         
         
-    def blast_features(self, feature_fasta, feature_dir) :
+    def blast_features(self, feature_fasta, feature_dir, feature_name) :
         
         # Make a directory for the new features
         os.makedirs(feature_dir)
@@ -1404,6 +1443,13 @@ class Analysis :
                             '| sort -k 1,1 -k2,2n',
                             '>' + best_bed])
         self.print_and_run(command)
+
+        # Keep the feature hits for later drawing.  It may be empty, i.e., no feature hits
+        try :
+            best = pandas.read_csv(filepath_or_buffer = best_bed, sep = '\t', header = None)
+            self.feature_hits[feature_name] = best
+        except :
+            return
 
             
     def call_amr_mutations(self) :
@@ -1508,37 +1554,52 @@ class Analysis :
 
         # Take very large things out of the assembly.  They aren't plasmids and take a long time to run
         self.print_and_log('Finding contigs < 500000 bp', self.sub_process_verbosity, self.sub_process_color)
-        self.smaller_contigs_fasta = os.path.join(self.plasmid_dir, 'small_contigs.fasta')
+        smaller_contigs_fasta = os.path.join(self.plasmid_dir, 'small_contigs.fasta')
         command = ' '.join(['faidx -i chromsizes', self.genome_fasta,
                             '| awk \'($2 <= 500000){print $1}\'',
-                            '| parallel -n1 -n1 faidx', self.genome_fasta, '>', self.smaller_contigs_fasta])
+                            '| parallel -n1 -n1 faidx', self.genome_fasta, '>', smaller_contigs_fasta])
         self.print_and_run(command)
+        self.validate_file_and_size_or_error(smaller_contigs_fasta, 'Region plain text MPILEUP file', 'cannot be found', 'is empty')
                                     
-        # Query plasmid sequences against the assembly
-        self.print_and_log('Running PBLAT against the plasmid database', self.sub_process_verbosity, self.sub_process_color)
-        self.plasmid_psl = os.path.join(self.plasmid_dir, 'plasmid_hits.psl')
-        stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'pblat.' + i) for i in ['stdout', 'stderr']]
-        command = ' '.join(['pblat -noHead -tileSize=15',
-                            '-minIdentity=97',
-                            '-threads=' + str(self.threads),
-                            self.smaller_contigs_fasta, self.plasmid_database, self.plasmid_psl,
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
+        # Query plasmid sequences against the assembly using minimap2
+        self.print_and_log('Running minimap2 against the plasmid database', self.sub_process_verbosity, self.sub_process_color)
+        plasmid_sam = os.path.join(self.plasmid_dir, 'plasmid_hits.sam')
+        stderr_file = os.path.join(self.plasmid_dir, 'minimap.stderr')
+        command = ' '.join(['minimap2',
+                            '-k 20 -p .333 -a',
+                            '-t', str(self.threads),
+                            self.genome_fasta,
+                            self.plasmid_database,
+                            '1>', plasmid_sam, '2>', stderr_file])
         self.print_and_run(command)
-
+        self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig SAM', 'cannot be found', 'is empty')
+        
+        # Turn the SAM file in to a PSL file using the modified sam2psl script
+        self.print_and_log('Converting the SAM file to a PSL file', self.sub_process_verbosity, self.sub_process_color)
+        plasmid_psl = os.path.join(self.plasmid_dir, 'plasmid_hits.psl')
+        stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'sam2psl.' + i) for i in ['stdout', 'stderr']]
+        command = ' '.join(['sam2psl.py',
+                            '-i', plasmid_sam,
+                            '-o', plasmid_psl,
+                            '1>', stdout_file, '>2', stderr_file])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig PSL', 'cannot be found', 'is empty')
+        
         # Pass the data onto pChunks
         self.print_and_log('Running pChunks', self.sub_process_verbosity, self.sub_process_color)
         self.pchunks_dir = os.path.join(self.plasmid_dir, 'pChunks')
         os.makedirs(self.pchunks_dir)
+        
+        self.plasmid_tsv = os.path.join(self.pchunks_dir, 'plasmids.tsv')
         stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'pChunks.' + i) for i in ['stdout', 'stderr']]
-        command = ' '.join(['pChunks.R', '--plasmid-psl', self.plasmid_psl,
+        command = ' '.join(['pChunks.R', '--plasmid-psl', plasmid_psl,
                             '--output', self.pchunks_dir,
                             '--no-amr', '--no-inc',
                             '--plasmid-database', self.plasmid_database,
                             '--threads', str(self.threads),
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
+                            '1>' + stdout_file, '2>' + stderr_file])
         self.print_and_run(command)
+        self.validate_file_and_size_or_error(self.plasmid_tsv, 'Plasmid output table', 'cannot be found', 'is empty')
 
         # The final file is in pChunks
         self.plasmid_tsv = os.path.join(self.pchunks_dir, 'plasmids.tsv')
@@ -1547,7 +1608,7 @@ class Analysis :
         self.print_and_run(command)
         self.plasmid_tsv = new_plasmid_tsv
         
-        self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t')
+        self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t', header = None)
 
         
     def call_insertions(self) :
@@ -1582,7 +1643,7 @@ class Analysis :
                             '>', genome_aligned_bed])
         self.print_and_run(command)
 
-        # Find the unaligned regions
+        # Find the unaligned regions.  These are our insertions and deletions
         reference_sizes = os.path.join(self.insertions_dir, 'reference.sizes')
         reference_insertions_bed = os.path.join(self.insertions_dir, 'reference_insertions.bed')
         genome_sizes = os.path.join(self.insertions_dir, 'genome.sizes')
@@ -1596,24 +1657,98 @@ class Analysis :
         command = ' '.join(['bedtools complement',
                             '-i', reference_aligned_bed,
                             '-g', reference_sizes,
-                            '| awk \'($3 - $2 >= 100){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
+                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
                             '>', reference_insertions_bed])
         self.print_and_run(command)
-        
+        self.reference_insertions = pandas.read_csv(filepath_or_buffer = reference_insertions_bed, sep = '\t', header = None)
+
         command = ' '.join(['bedtools complement',
                             '-i', genome_aligned_bed,
                             '-g', genome_sizes,
-                            '| awk \'($3 - $2 >= 100){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
+                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
                             '>', genome_insertions_bed])
         self.print_and_run(command)
+        self.genome_insertions = pandas.read_csv(filepath_or_buffer = genome_insertions_bed, sep = '\t', header = None)
 
 
+    def draw_features(self) :
+
+        self.print_and_log('Drawing features', self.main_process_verbosity, self.main_process_color)
+
+        self.drawing_dir = os.path.join(self.output_dir, 'drawing')
+        os.mkdir(self.drawing_dir)
+        figure_width = 13
+
+        # Draw one plot per contig for simplicity
+        for contig in self.genome :
+            
+            contig_plot_pdf = os.path.join(self.drawing_dir, contig.id + '.pdf')
+            
+            feature_sets_to_plot = pandas.Series()
+            
+            for feature_number in range(len(self.feature_hits)) :
+                feature_name = self.feature_hits.index.to_list()[feature_number]
+                these_features = self.feature_hits[feature_name]
+
+                contig_features = these_features.loc[these_features.iloc[:,0] == contig.id, :]
+                if (contig_features.shape[0] == 0) :
+                    continue
+                    
+                features_to_plot =[]
+                
+                for i in range(contig_features.shape[0]) :
+                    i = contig_features.iloc[i, :]
+                    features_to_plot += [GraphicFeature(start = i[1], end = i[2], label = i[3], strand = 1*i[5], color = self.feature_colors[feature_number])]
+                    
+                feature_sets_to_plot[feature_name] = features_to_plot
+                
+            # Figure out high each plot will be on its own for later scaling
+            expected_plot_heights = []
+            for i in range(len(feature_sets_to_plot)) :
+                record = GraphicRecord(sequence_length = len(contig), features = feature_sets_to_plot[i])
+
+                with_ruler  = False
+                if i == len(feature_sets_to_plot) - 1 :
+                    with_ruler = True
+
+                plot, _ = record.plot(figure_width = figure_width, with_ruler = with_ruler)
+                expected_plot_heights += [plot.figure.get_size_inches()[1]]
+                
+            plot_height_sum = sum(expected_plot_heights)
+
+            # Make a figure with separate plots for each feature class
+            plots = plt.subplots(nrows = len(feature_sets_to_plot), ncols = 1, sharex = True,
+                                 figsize=(figure_width, plot_height_sum * .66666), gridspec_kw={"height_ratios": expected_plot_heights})
+            figure = plots[0]
+            plots = plots[1]
+            if len(feature_sets_to_plot) == 1: 
+                plots = [plots]
+
+            # Add each feature class's plot with the pre-determined height
+            for i in range(len(feature_sets_to_plot)) :
+                record = GraphicRecord(sequence_length = len(contig), features = feature_sets_to_plot[i])
+
+                with_ruler  = False
+                if i == len(feature_sets_to_plot) - 1 :
+                    with_ruler = True
+                    
+                plot, _ = record.plot(ax = plots[i], with_ruler = with_ruler, figure_width = figure_width)
+                ymin, ymax = plot.figure.axes[0].get_ylim()
+
+                if i == 0 : 
+                    plot.text(x = 0, y = ymax, s = contig.id) 
+                
+            figure.tight_layout()
+            figure.savefig(contig_plot_pdf)
+
+        
     def clean_up(self) :
 
         if (self.genome_fasta) :
             final_fasta = os.path.join(self.output_dir, 'assembly.fasta')
             command = ' '.join(['cp', self.genome_fasta, final_fasta])
             self.print_and_run(command)
+
             
     def go(self) :
 
@@ -1742,6 +1877,12 @@ if __name__ == '__main__':
                                      help = 'Path to a FASTA file with feature sequences')
     
     
+    # Drawing options
+    drawing_group = parser.add_argument_group('Drawing options')
+    drawing_group.add_argument('--no-drawing', required = False, default = False, action = 'store_true',
+                                     help = 'Skip drawing of contigs & Features (default : %(default)s)')
+
+
     # Which organism are we working with here
     organism_group = parser.add_argument_group('Organism options')
     organism_group.add_argument('--reference-dir', required = False, default = reference_dir_default, metavar = '<REFERNCE_DIR>',

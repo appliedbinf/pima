@@ -9,19 +9,6 @@ library(optparse)
 
 options(width = 180)
 
-blat = function(sample) {
-    assemblyFile = paste0('assembly/', sample, '.fasta')
-    outputFile = paste0('plasmids/hits', sample, '.psl')
-    command = paste('blat -tileSize=18 -minIdentity=98',
-        assemblyFile,
-        '/data/home/gtg075i/data/plasmidsAndArtificial/plasmidsAndArtificial.fna',
-        outputFile)
-    if (file.size(outputFile) == 0) {
-        print(command)
-        system(command)
-    }
-}    
-
 printif = function(string = NULL, condition){
     if (condition) {
         print(string)
@@ -84,7 +71,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     dir.create(outputDirectory)
     outputPrefix = paste0(outputDirectory, "/plasmids")
     
-    ## Read in and filter the BLAT plasmid hits
+    ## Read in and filter the plasmid hits
     plasmidHits = read.table(plasmidPSLFile, row.names = NULL, header = FALSE, sep = '\t', stringsAsFactors = FALSE, skip = 5)
     colnames(plasmidHits) = c('match', 'mismatch', 'rep_m', 'Ns', 'tgap_c', 'tgap_b',
                 'qgap_c', 'qgap_b', 'strand',
@@ -197,7 +184,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     }
 
     
-    ## Pull the full plasmid names from the blast database because BLAT doens't report them, just the ID's
+    ## Pull the full plasmid names from the blast database because BLAT/minimap2 doesn't report them, just the ID's
     targetIDs = plasmidHits[,'target']
     targetIDs = gsub("\\|$", "", targetIDs)
     targetIDs = gsub(".*(\\|.*)$", "\\1", targetIDs)
@@ -218,7 +205,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     
     #Pull just the plasmids out of the larget set of hits, i.e, make sure it has the word 'plasmid' in the description.
     plasmidHits = plasmidHits[grep('plasmid|vector', plasmidHits[,'targetNames'], ignore.case = TRUE), ,drop = FALSE]
-    plasmidHits = plasmidHits[!grepl('tig0000', plasmidHits[,'targetNames'], ignore.case = TRUE), , drop = FALSE]
+    plasmidHits = plasmidHits[!grepl('tig0000|unnamed', plasmidHits[,'targetNames'], ignore.case = TRUE), , drop = FALSE]
     printif(paste("Sequece-plasmid hits after screening by name:", paste(dim(plasmidHits), collapse = 'x')), verbosity > 1)
 
     ## Stop if there is nothing left
@@ -237,7 +224,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     plasmidNames = gsub(', contig.*', '', plasmidNames)
     plasmidNames = gsub(', partial.*', '', plasmidNames)
     plasmidNames = gsub('strain ', '', plasmidNames)
-    #plasmidNames = gsub('plasmid ', '', plasmidNames)
     plasmidNames = gsub('^ *', '', plasmidNames)
     plasmidNames = sub('^(cl\\|)(.*?) ', '', plasmidNames)
     plasmidNames = sub('subsp. (.*?) ', '', plasmidNames)
@@ -253,7 +239,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     ## Find the set of plasmid coverage hits for each itteration
     usedContigs = c()
     plasmidMismatches = c()
-
 
     ## Order hits by the plasmid ID and the query length
     plasmidHits = plasmidHits[order(plasmidHits[,'target'], -plasmidHits[,'qlength']), ]
@@ -282,6 +267,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
         }
         repLengths = c()
 
+
         ## Find the coverage of each plasmid in the possible set by the contigs
         for (i in 1:nrow(plasmidHits)) {
         
@@ -295,7 +281,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
             queryStarts = as.numeric(unlist(strsplit(plasmidHits[i, 'qstarts'], ',')))
             targetStarts = as.numeric(unlist(strsplit(plasmidHits[i, 'tstarts'], ',')))
 
-           
             ## Skip matches which have less than 50% of the bases from the contig on the plasmid -- probably not a good match
             if ((sum(queryCoverage[[query]][[target]]) - queryMismatches[[query]][[target]]) / queryLength <= minQueryCoverage)  {
                 next
@@ -323,19 +308,12 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
                 plasmidMismatches[target] = 0
             }
             
-
-            ## Keep track of how much of each plasmid is covered by ALL of the contigs in the current set of hits
-            if (plasmidHits[i,'strand'] == '-') { #Flip stupid reverse strand
-                targetStarts = rev(plasmidHits[i,'tlength'] - targetStarts) - rev(blockSizes)
-            }
-            previousCoverage = sum(plasmidCoverage[[target]])
-            previousMismatches = plasmidMismatches[target]
             penalized = FALSE
             for (j in 1:length(blockSizes)) {
 
                 ## Keep track of all contig alignments to this plasmid, even with repeats
                 plasmidCoverageWithRepeats[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])] = 1
-                
+
                 ## Skip if this region of the query sequence has already been assigned to this plasmid
                 if (sum(contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0) <= 50) {
                     printif(paste('Sequence', query, 'already used for', target,
@@ -352,7 +330,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
 
                 plasmidCoverage[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0] = 1
                 contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] = 1
-
             }
 
             ## Relate this plasmid to this contig
@@ -361,21 +338,17 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
             } else {
                 plasmidToContig[[target]][[query]] = plasmidToContig[[target]][[query]] + score
             }
-            
         }
-
         
         ## Get the best set of plasmids out, i.e., the set with the most bases matching between the contig and plasmid
         plasmidScores = c()
         for (thisPlasmid in keys(plasmidCoverage)){
             thisPlasmidScore = sum(plasmidCoverage[[thisPlasmid]])
-            #thisPlasmidScore = thisPlasmidScore * log((thisPlasmidScore / length(plasmidCoverage[[thisPlasmid]])) * 100)**2
-            #thisPlasmidScore = thisPlasmidScore * (thisPlasmidScore / length(plasmidCoverage[[thisPlasmid]]))
             plasmidScores = c(plasmidScores, thisPlasmidScore)
             names(plasmidScores)[length(plasmidScores)] = thisPlasmid
         }
         plasmidScores = sort(plasmidScores - plasmidMismatches[names(plasmidScores)], dec = TRUE)
-        
+
         if (length(plasmidScores) > 0) {
             printif('Highest scoring plasmids', verbosity > 1)
             printif(head(cbind(plasmidScores), 20), verbosity > 1)
@@ -395,7 +368,12 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
         if (!is.null(searchDepth) && plasmidNumber <= length(searchDepth)) {
             plasmidToUse = searchDepth[plasmidNumber]
         }
+        if (plasmidToUse > length(plasmidScores)) {
+            plasmidToUse = length(plasmidScores)
+        }
+                      
         plasmid = names(plasmidScores)[plasmidToUse]
+        print(paste('Plasmid picked', plasmid))
         totalPlasmidScore = totalPlasmidScore + plasmidScores[plasmid]
         printif(paste("Pulling sequences for", plasmid), verbosity > 0)
         
@@ -423,92 +401,6 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
 
         ## How many bases from the plasmid are uncovered?
         plasmidMissing = rep(sum(plasmidCoverageWithRepeats[[as.character(plasmidID)]] == 0), nrow(plasmidRows))
-        
-
-        ## Create a circos plot for this plasmid
-        if (makeCircos) {
-            circosDirectory = paste0(outputDirectory, '/circos')
-            dir.create(circosDirectory, showWarnings = FALSE)
-            
-            printif(paste('Drawing circos diagram for', plasmid), verbosity > 1)
-            plasmidConfFile = paste0(circosDirectory,  '/', plasmidID, '.conf')
-            command = paste('cat plasmids/circos/plasmid.conf',
-                 '| sed', paste('"s/PLASMID/', plasmidID, '/g"', sep = ''),
-                 '>', plasmidConfFile)
-            printif(command, verbosity > 1)
-            system(command)
-            
-            plasmidIdeogramFile = paste0(circosDirectory, '/', plasmidID, 'Ideogram.conf')
-            command = paste('cat plasmids/circos/plasmidIdeogram.conf',
-                '| sed', paste('"s/PLASMID/', plasmidID, '/g"', sep = ''),
-                '>', plasmidIdeogramFile)
-            printif(command, verbosity > 1)
-            system(command)        
-            
-            plasmidKaryotypeFile = paste0(circosDirectory, '/', plasmidID, 'Karyotype.conf')
-            command = paste('cat plasmids/circos/plasmidKaryotype.conf',
-                '| sed', paste('"s/PLASMID/', plasmidID, '/g"', sep = ''),
-                '>', plasmidKaryotypeFile)
-            printif(command, verbosity > 1)
-            system(command)
-            
-            plasmidKaryotypeDataFile = paste(circosDirectory, '/', plasmidID, 'Karyotype.txt', sep = '')
-            plasmidKaryotypeData = rbind(c('chr', '-', 'plasmid', 1, 0, plasmidLength[1], 'plasmid'))
-            write.table(file = plasmidKaryotypeDataFile, x = plasmidKaryotypeData,
-                        row.names = FALSE, col.names = FALSE, quote = FALSE, sep = '\t')
-
-            ## Find starts / stops of alignments along the plasmid
-            thisPlasmidCoverage = plasmidCoverageWithRepeats[[as.character(plasmidID)]]
-            blockStarts = seq(2, length(thisPlasmidCoverage))[
-                thisPlasmidCoverage[2:length(thisPlasmidCoverage)] != 0 &
-                    (thisPlasmidCoverage[2:length(thisPlasmidCoverage)] != thisPlasmidCoverage[1:(length(thisPlasmidCoverage) - 1)])]
-            if (thisPlasmidCoverage[1] == 1) {
-                blockStarts = c(1, blockStarts)
-            }
-            
-            blockStops = seq(2, length(thisPlasmidCoverage))[
-                thisPlasmidCoverage[2:length(thisPlasmidCoverage)] == 0 &
-                    (thisPlasmidCoverage[2:length(thisPlasmidCoverage)] != thisPlasmidCoverage[1:(length(thisPlasmidCoverage) - 1)])]
-            if (thisPlasmidCoverage[length(thisPlasmidCoverage)] == 1) {
-                blockStops = c(blockStops, length(thisPlasmidCoverage))
-            }
-
-            printif(cbind(blockStarts, blockStops), verbosity >= 2)
-            
-            plasmidContigDataFile = paste(circosDirectory, '/', plasmidID, 'Contigs.txt', sep = '')
-            plasmidContigData = cbind(blockStarts, blockStops, 1:length(blockStarts))
-            plasmidContigData = cbind(rep('plasmid', nrow(plasmidContigData)), plasmidContigData)
-            print(plasmidContigData)
-            write.table(file = plasmidContigDataFile, x = plasmidContigData, row.names = FALSE, col.names = FALSE, quote = FALSE, sep = '\t')
-
-            plasmidGeneDataFile = paste(circosDirectory, '/', plasmidID, 'Genes.txt', sep = '')
-    ##        print(circosGenes)
-    ##         if (!is.null(nrow(circosGenes))) { 
-    ##             plasmidData = cbind(rep('plasmid', nrow(circosGenes)), circosGenes)
-    ##         } else {
-    ##             plasmidData = ''
-    ##         }
-            ##write.table(file = plasmidGeneDataFile, x = plasmidData, row.names = FALSE, col.names = FALSE, quote = FALSE, sep = '\t')
-            write.table(file = plasmidGeneDataFile, x = "", row.names = FALSE, col.names = FALSE, quote = FALSE, sep = '\t')
-            
-            command = paste('~/src/circos-0.69-3/bin/circos',
-                '-conf', plasmidConfFile,
-                '-debug_group textplace')
-            print(command)
-            system(command)
-
-            ## Add the plasmid name
-            plasmidTitle = gsub("(.{15,30}) ", "\\1\n", plasmidName[1])
-            plasmidPNGFile = paste0(circosDirectory, '/', plasmidID, '.png')
-            command = paste('convert',
-                plasmidPNGFile,
-                '-gravity Center -pointSize 200',
-                '-annotate +0+0', paste0('"', plasmidTitle, '"', sep = ''),
-                plasmidPNGFile)
-            print(command)
-            system(command)
-
-        }
 
         ## Keep track of all of the contigs included
         usedContigs = c(usedContigs, unusedContigs)
@@ -729,7 +621,7 @@ pChunks = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     
 optionList = list(
     make_option('--plasmid-psl', type = 'character', default = NULL,
-                help = 'Plasmid BLAT output', metavar = '<PSL_FILE>'),
+                help = 'Plasmid PSL database-v-contig output', metavar = '<PSL_FILE>'),
     make_option('--plasmid-database', type = 'character', default = NULL,
                 help = 'Plasmid database', metavar = '<PLASMID_FASTA>'),
     make_option('--amr-database', type = 'character', default = NULL,
@@ -753,6 +645,7 @@ pChunks(plasmidPSLFile = opt$'plasmid-psl', plasmidDatabase = opt$'plasmid-datab
         amrPSLFile = opt$'amr-blast', amrDatabase = opt$'amr-database',
         outputDirectory = opt$output,
         threads = opt$threads,
+#        searchDepth = c(1,1),
         searchDepth = c(5,5),
         noAMR = TRUE, noInc = TRUE,
         verbosity = 2)
