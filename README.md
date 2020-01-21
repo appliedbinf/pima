@@ -1,4 +1,6 @@
-   * [PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline](#pima-plasmid-integrations-mutations-and-antibiotic-resistance-annotation-pipeline)
+# PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
+
+  * [PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline](#pima-plasmid-integrations-mutations-and-antibiotic-resistance-annotation-pipeline)
    * [Installation](#installation)
       * [Conda environments](#conda-environments)
       * [Dependencies](#dependencies)
@@ -9,9 +11,6 @@
    * [Quickstart / demo](#quickstart--demo)
    * [Usage](#usage)
    * [Using your own data](#using-your-own-data)
-
-
-# PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
 
 
 PIMA (Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline) is a high-throughput sequence analysis pipeline.  PIMA is an end-to-end solution encompassing all the steps required to transform raw ONT output into high-quality annotated assemblies.  PIMA supports providing optional Illumina paired end reads for polishing and error correcting assemblies.
