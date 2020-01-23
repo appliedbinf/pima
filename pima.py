@@ -30,10 +30,13 @@ VERSION=1.0
 
 
 pima_path = os.path.dirname(os.path.realpath(__file__))
+data_dir = os.path.join(pima_path, 'data')
 amr_database_default = f"{pima_path}/data/amr.fasta"
 amr_default_color = '#FED976'
 inc_database_default = f"{pima_path}/data/inc.fasta"
 inc_default_color = '#0570B0'
+included_databases = [amr_database_default, inc_database_default]
+
 plasmid_database_default = f"{pima_path}/data/plasmids_and_vectors.fasta"
 reference_dir_default = f"{pima_path}/reference_sequences"
 
@@ -105,12 +108,14 @@ class Analysis :
         self.feature_dirs = []
         self.feature_names = []
         self.feature_colors = []
+
+        self.download = opts.download
         
         # Reference options
         self.reference_dir = opts.reference_dir
         self.organism = opts.organism
-        self.no_reference = opts.no_reference
-        self.no_mutations = opts.no_mutations
+        self.reference_fasta = opts.reference_genome
+        self.mutation_region_bed = opts.mutation_regions
         
         self.threads = opts.threads
 
@@ -167,6 +172,10 @@ class Analysis :
             return True
 
         
+    def validate_file_and_size(self, the_file) :
+        return(self.validate_file(the_file) and self.validate_file_size(the_file))
+        
+        
     def validate_file_and_size_or_error(self, the_file, error_prefix = 'The file',
                                         presence_suffix = 'doesn\'t exist',
                                         size_suffix = 'is size 0') :
@@ -190,17 +199,37 @@ class Analysis :
         for contig in Bio.SeqIO.parse(self.genome_fasta, 'fasta') :
             self.genome[contig.id] = contig
 
+
+    def download_databases(self) :
+
+        self.print_and_log('Downloading missing databases', self.main_process_verbosity, self.main_process_color)
+
+        databases = ['amr', 'inc', 'plasmids_and_vectors']
+        for database in databases :
+            database_fasta = os.path.join(data_dir, database + '.fasta')
+            if self.validate_file_and_size(database_fasta) :
+                continue
+            command = ' '.join(['wget',
+                                '-O', database_fasta,
+                                'http://pima.appliedbinf.com/data/' + database + '.fasta'])
+            self.print_and_run(command)
+                           
             
     def minimap_ont_fastq(self, genome, fastq, bam) :
+
+        std_prefix = re.sub('\.bam$', '', bam)  
+        stdout_file, stderr_file = [std_prefix + '.std' + i for i in ['out', 'err']]
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
                             '-x map-ont',
                             genome,
                             fastq,
+                            '2>', stderr_file,
                             '| samtools sort',
                             '-@', str(self.threads),
                             '-o', bam,
-                            '-T reads.tmp -'])
+                            '-T reads.tmp -',
+                            '2>/dev/null'])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(bam)
         self.index_bam(bam)
@@ -316,7 +345,7 @@ class Analysis :
 
         self.print_and_log('Validating genome FASTA', self.main_process_verbosity, self.main_process_color)
 
-        if not os.path.isfile(self.genome_fasta) :
+        if not self.validate_file_and_size(self.genome_fasta) :
             self.errors += ['Input genome FASTA ' + self.genome_fasta + ' cannot be found']
         self.will_have_genome_fasta = True
 
@@ -326,9 +355,10 @@ class Analysis :
     def validate_output_dir(self) :
         if not opts.output :
             self.errors += ['No output directory given (--output)']
-            return
         elif self.output_dir and os.path.isdir(self.output_dir) and not self.overwrite :
             self.errors += ['Output directory ' + self.output_dir + ' already exists.  Add --overwrite to ignore']
+
+        self.analysis = ['make_output_dir'] + self.analysis
 
 
     def validate_guppy(self) :
@@ -564,8 +594,8 @@ class Analysis :
         self.print_and_log('Validating Illumina data', self.main_process_verbosity, self.main_process_color)
         
         for r_fastq in self.illumina_fastq :
-            if not os.path.isfile(r_fastq) :
-                self.errors += ['Illumian FASTQ file' + r_fastq + ' cannot be found']
+            if not self.validate_file_and_size(r_fastq) :
+                self.errors += ['Illumian FASTQ file' + r_fastq + ' cannot be found or is size 0']
         
         # Assume we want to use Illumina data to polish a given genome or ONT assembly
         if self.ont_fast5 or self.ont_fastq or self.genome_fasta :
@@ -600,8 +630,15 @@ class Analysis :
         self.print_and_log('Validating feature sets', self.main_process_verbosity, self.main_process_color)
         
         for feature_fasta in self.feature_fastas :
-            if not os.path.isfile(feature_fasta) :
-                self.errors += ['Can\'t find feature database ' + feature_fasta]
+            if not self.validate_file_and_size(feature_fasta) :
+
+                # See if the missing database can be downloaded
+                if feature_fasta in included_databases :
+                    if not self.download :
+                        self.errors += ['Can\'t find feature database ' + feature_fasta + ' or is size 0.  Try --download?']
+                        
+                else :
+                    self.errors += ['Can\'t find feature database ' + feature_fasta]
 
 
     @unless_only_basecall
@@ -625,35 +662,32 @@ class Analysis :
     @unless_only_basecall
     def validate_reference(self) :
 
-        if not self.organism :
+        if not (self.organism or self.reference_fasta) :
             return
 
         self.print_and_log('Validating reference genome and utilities', self.main_process_verbosity, self.main_process_color)
         
+        if self.organism and self.reference_fasta :
+            self.errors += ['--organism and --reference-genome are mutually exclusive']
+            return
+        
         #1 - Check for mummer utils
-        for util in ['dnadiff', 'nucmer', 'mummer'] :
-            if not shutil.which(util) :
-                self.errors += ['Can\'t find ' + util + ' on the PATH']
+        for utility in ['dnadiff', 'nucmer', 'mummer'] :
+            self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
 
-        #2 - Check for the reference sequence.
-        if not os.path.isdir(self.reference_dir) :
-            self.errors += ['Can\'t find reference directory ' + self.reference_dir]
-
-        if not self.no_reference :
-            if self.organism == None :
-                self.errors += ['Organism not given.  Add --no-reference to skip reference comparison']
+        #2 - Check for the reference sequence either as given or in the organism dir
+        if self.organism :
+            if not os.path.isdir(self.reference_dir) :
+                self.errors += ['Can\'t find reference directory ' + self.reference_dir]
             else :
                 self.organism_dir = os.path.join(self.reference_dir, self.organism)
                 if not os.path.isdir(self.organism_dir) :
                     self.errors += ['Can\'t find organism directory ' + self.organism_dir]
-        
-                #It should be in reference_sequences/organism
-                self.reference_fasta = os.path.join(self.organism_dir, 'genome.fasta')
-                if not os.path.isfile(self.reference_fasta) :
-                    self.errors += ['Can\'t find genome.fasta in the reference directory.']
-                self.mutation_regions_bed = os.path.join(self.reference_dir, self.organism, 'mutation_regions.bed')
-                if not os.path.isfile(self.mutation_regions_bed) :
-                    self.errors += ['Can\'t find mutation_regions.bed in the reference directory.']
+                else :
+                    self.reference_fasta = os.path.join(self.organism_dir, 'genome.fasta')
+                
+        if not self.validate_file_and_size(self.reference_fasta) :
+            self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
                 
         if  self.will_have_genome_fasta :
             self.analysis = self.analysis + ['call_insertions']
@@ -661,20 +695,32 @@ class Analysis :
         
     @unless_only_basecall        
     def validate_mutations(self) :
+
+        if not (self.organism or self.mutation_region_bed) :
+            return
+
+        if self.organism and self.mutation_region_bed :
+            self.errors += ['--organism and --mutation-regions are mutually exclusive']
+
+        if self.mutation_region_bed and not self.reference_fasta :
+            self.errors += ['--mutation-regions requires --reference-genome']
         
-        if self.no_mutations :
-            return
-
-        if not self.organism :
-            return
-
         self.print_and_log('Validating mapping and variant utilities', self.main_process_verbosity, self.main_process_color)
         
-        if not (self.ont_fast5 or self.ont_fastq or self.illumina_fastq):
+        # If we have an organism, then use that mutation set.  If we didn't get a different one, then skip this step.
+        if self.organism :
+            self.mutation_region_bed = os.path.join(self.organism_dir, 'mutation_regions.bed')
+        elif not self.mutation_region_bed :
+            return
+
+        # Either from the built in set or given as an argument, make sure the file is there
+        if not self.validate_file_and_size(self.mutation_region_bed) :
+            self.errors += ['Mutation region BED ' + self.mutation_region_bed + ' can\'t be found or is size 0.']
+
+        # We need reads to make calls
+        if not (self.ont_fast5 or self.ont_fastq or self.illumina_fastq) :
             self.errors += ['Can\'t call mutations without a FAST5 or FASTQ dataset']
-        if not self.organism or self.no_reference :
-            self.errors += ['Can\'t call mutations without a reference genome']
-        
+            
         for utility in ['minimap2', 'samtools', 'bcftools'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
                 
@@ -692,8 +738,8 @@ class Analysis :
         for utility in ['minimap2', 'Rscript', 'R', 'pChunks.R'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
         
-        if not os.path.isfile(self.plasmid_database) :
-            self.errors += ['Can\'t find plasmid database ' + self.plasmid_database]
+        if not self.validate_file_and_size(self.plasmid_database) :
+            self.errors += ['Can\'t find plasmid database ' + self.plasmid_database + ' or is size 0.  Try --download?']
             
         if not self.will_have_genome_fasta :
             self.errors += ['Can\'t call plasmids without a genome or an assembly']
@@ -704,15 +750,31 @@ class Analysis :
     @unless_only_basecall
     def validate_draw_features(self) :
         
-        if  self.no_drawing :
+        if self.no_drawing :
             return
 
+        if not self.will_have_genome_fasta :
+            return
+        
         self.analysis += ['draw_features']
 
-            
-    def validate_options(self) :
 
-        self.validate_output_dir()
+    def validate_download(self) :
+
+        if not self.download :
+            return
+
+        self.errors = []
+
+        self.verbosity = 3
+        
+        if len(sys.argv) > 2 :
+            self.errors += ['Use --download without any other arguments']
+        
+        self.analysis = ['download_databases']
+        
+        
+    def validate_options(self) :
 
         self.validate_ont_fast5()
         self.validate_ont_fastq()
@@ -743,14 +805,21 @@ class Analysis :
         self.validate_mutations()
         self.validate_plasmids()
         self.validate_draw_features()
-
+        
         if len(self.analysis) == 0 :
             self.errors = self.errors + ['Nothing to do!']
+
+        self.analysis = self.analysis + ['clean_up']
+            
+        self.validate_output_dir()
+            
+        self.validate_download()
 
             
     def load_organisms() :
         print('Pretending to load organisms')
 
+        
     def list_organisms() :
         '''
         Lists the set of reference organisms available to Pima
@@ -1368,14 +1437,30 @@ class Analysis :
 
         self.load_genome()
 
+        
+    def make_blast_database(self, database_fasta) :
 
+        self.print_and_log('Making a BLAST database for ' + database_fasta, self.sub_process_verbosity, self.sub_process_color)
+        std_prefix = re.sub('\.[^.]*$', '', database_fasta)
+        stdout_file, stderr_file = [std_prefix + '.std' + i for i in ['out', 'err']]
+        command = ' '.join(['makeblastdb -in', database_fasta, '-dbtype nucl -parse_seqids',
+                            '1>' + stdout_file,
+                            '2>' + stderr_file])
+        self.print_and_run(command)
+
+        
     def blast_feature_sets(self) :
 
+        self.print_and_log('BLASTing feature sets', self.main_process_verbosity, self.main_process_color)
+        
         self.features_dir = os.path.join(self.output_dir, 'features')
         os.makedirs(self.features_dir)
         
         self.feature_hits = pandas.Series()
 
+        # Make a blast database of the genome
+        self.make_blast_database(self.genome_fasta)
+        
         for feature_number in range(len(self.feature_fastas)) :
             feature_fasta = self.feature_fastas[feature_number]
             feature_name = re.sub('\\.f.*', '', os.path.basename(feature_fasta))
@@ -1389,16 +1474,6 @@ class Analysis :
         
         # Make a directory for the new features
         os.makedirs(feature_dir)
-
-        # BLASTn the feature set against the assembly
-        #TODO - Make the BLAST db files show up in the output directory.  The genome may be somewhere else.
-        self.print_and_log('Making a BLAST database from the assembly', self.sub_process_verbosity, self.sub_process_color)
-        stdout_file = os.path.join(feature_dir, 'makeblastdb.out')
-        stderr_file = os.path.join(feature_dir, 'makeblastdb.stderr')
-        command = ' '.join(['makeblastdb -in', self.genome_fasta, '-dbtype nucl -parse_seqids',
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
-        self.print_and_run(command)
         
         # BLASTn the feature set
         blast_output = os.path.join(feature_dir, 'blast_output.tsv')
@@ -1451,6 +1526,76 @@ class Analysis :
         except :
             return
 
+        
+    def call_insertions(self) :
+
+        self.print_and_log('Calling insertions', self.main_process_verbosity, self.main_process_color)
+        
+        # Make the directory for new assembly files
+        self.insertions_dir = os.path.join(self.output_dir, 'insertions')
+        os.makedirs(self.insertions_dir)
+
+        # Align the assembly against the reference sequence
+        self.print_and_log('Running dnadiff against the reference', self.sub_process_verbosity, self.sub_process_color)
+        self.dnadiff_prefix = os.path.join(self.insertions_dir, 'vs_reference')
+        stdout_file = os.path.join(self.insertions_dir, 'dnadiff.stdout')
+        stderr_file = os.path.join(self.insertions_dir, 'dnadiff.stderr')
+        command = ' '.join(['dnadiff -p', self.dnadiff_prefix, self.reference_fasta, self.genome_fasta,
+                            '1>' + stdout_file,
+                            '2>' + stderr_file])
+        self.print_and_run(command)
+
+        # Pull out the aligned regions of the two genomes
+        self.print_and_log('Finding reference and query specific insertions', self.sub_process_verbosity, self.sub_process_color)
+        one_coords = self.dnadiff_prefix + '.1coords'
+        reference_aligned_bed =  os.path.join(self.insertions_dir, 'reference_aligned.bed')
+        genome_aligned_bed = os.path.join(self.insertions_dir, 'genome_aligned.bed')
+        command = ' '.join(['cat', one_coords,
+                            '| awk \'{OFS = "\\t"; if ($2 < $1){t = $2; $2 = $1; $1 = t} print $12,$1,$2}\' | sort -k 1,1 -k 2,2n',
+                            '>', reference_aligned_bed])
+        self.print_and_run(command)
+        command = ' '.join(['cat', one_coords,
+                            '| awk \'{OFS = "\\t"; if ($4 < $3){t = $4; $4 = $3; $3 = t} print $13,$3,$4}\' | sort -k 1,1 -k 2,2n',
+                            '>', genome_aligned_bed])
+        self.print_and_run(command)
+
+        # Find the unaligned regions.  These are our insertions and deletions
+        reference_sizes = os.path.join(self.insertions_dir, 'reference.sizes')
+        reference_insertions_bed = os.path.join(self.insertions_dir, 'reference_insertions.bed')
+        genome_sizes = os.path.join(self.insertions_dir, 'genome.sizes')
+        genome_insertions_bed = os.path.join(self.insertions_dir, 'genome_insertions.bed')
+
+        command = ' '.join(['faidx -i chromsizes', self.reference_fasta, '>', reference_sizes])
+        self.print_and_run(command)
+        command = ' '.join(['faidx -i chromsizes', self.genome_fasta, '>', genome_sizes])
+        self.print_and_run(command)
+
+        command = ' '.join(['bedtools complement',
+                            '-i', reference_aligned_bed,
+                            '-g', reference_sizes,
+                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
+                            '>', reference_insertions_bed])
+        self.print_and_run(command)
+
+        # There may or may not be any insertions seen
+        try :
+            self.reference_insertions = pandas.read_csv(filepath_or_buffer = reference_insertions_bed, sep = '\t', header = None)
+        except :
+            self.reference_insertions = pandas.DataFrame()
+
+        command = ' '.join(['bedtools complement',
+                            '-i', genome_aligned_bed,
+                            '-g', genome_sizes,
+                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
+                            '>', genome_insertions_bed])
+        self.print_and_run(command)
+
+        # There may or may not be any insertions seen
+        try :
+            self.genome_insertions = pandas.read_csv(filepath_or_buffer = genome_insertions_bed, sep = '\t', header = None)
+        except :
+            self.genome_insertions = pandas.DataFrame() # Default to an empty DF
+        
             
     def call_amr_mutations(self) :
         
@@ -1472,7 +1617,7 @@ class Analysis :
         self.index_bam(self.reference_mapping_bam)
 
         # Pull out each region, one at a time
-        region_data = pandas.read_csv(filepath_or_buffer = self.mutation_regions_bed, sep = '\t', header = None)
+        region_data = pandas.read_csv(filepath_or_buffer = self.mutation_region_bed, sep = '\t', header = None)
         region_data.columns = ['contig', 'start', 'stop', 'description']
         for region_i in range(region_data.shape[0]) :
             region_i_description = region_data.loc[region_i,'description']
@@ -1525,6 +1670,7 @@ class Analysis :
             region_vcf = os.path.join(region_dir, 'region.vcf')
             stderr_file = os.path.join(region_dir, 'bcftools.stderr')
             command = ' '.join(['bcftools call',
+                                '--ploidy 1',
                                 '-c', region_pileup,
                                 '| bcftools view -v snps',
                                 '2>' + stderr_file,
@@ -1584,6 +1730,9 @@ class Analysis :
                             '1>', stdout_file, '>2', stderr_file])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig PSL', 'cannot be found', 'is empty')
+
+        # Make a BLAST database of the plasmid sequences
+        self.make_blast_database(self.plasmid_database)
         
         # Pass the data onto pChunks
         self.print_and_log('Running pChunks', self.sub_process_verbosity, self.sub_process_color)
@@ -1609,67 +1758,7 @@ class Analysis :
         self.plasmid_tsv = new_plasmid_tsv
         
         self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t', header = None)
-
         
-    def call_insertions(self) :
-
-        self.print_and_log('Calling insertions', self.main_process_verbosity, self.main_process_color)
-        
-        # Make the directory for new assembly files
-        self.insertions_dir = os.path.join(self.output_dir, 'insertions')
-        os.makedirs(self.insertions_dir)
-
-        # Align the assembly against the reference sequence
-        self.print_and_log('Running dnadiff against the reference', self.sub_process_verbosity, self.sub_process_color)
-        self.dnadiff_prefix = os.path.join(self.insertions_dir, 'vs_reference')
-        stdout_file = os.path.join(self.insertions_dir, 'dnadiff.stdout')
-        stderr_file = os.path.join(self.insertions_dir, 'dnadiff.stderr')
-        command = ' '.join(['dnadiff -p', self.dnadiff_prefix, self.reference_fasta, self.genome_fasta,
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
-        self.print_and_run(command)
-
-        # Pull out the aligned regions of the two genomes
-        self.print_and_log('Finding reference and query specific insertions', self.sub_process_verbosity, self.sub_process_color)
-        one_coords = self.dnadiff_prefix + '.1coords'
-        reference_aligned_bed =  os.path.join(self.insertions_dir, 'reference_aligned.bed')
-        genome_aligned_bed = os.path.join(self.insertions_dir, 'genome_aligned.bed')
-        command = ' '.join(['cat', one_coords,
-                            '| awk \'{OFS = "\\t"; if ($2 < $1){t = $2; $2 = $1; $1 = t} print $12,$1,$2}\' | sort -k 1,1 -k 2,2n',
-                            '>', reference_aligned_bed])
-        self.print_and_run(command)
-        command = ' '.join(['cat', one_coords,
-                            '| awk \'{OFS = "\\t"; if ($4 < $3){t = $4; $4 = $3; $3 = t} print $13,$3,$4}\' | sort -k 1,1 -k 2,2n',
-                            '>', genome_aligned_bed])
-        self.print_and_run(command)
-
-        # Find the unaligned regions.  These are our insertions and deletions
-        reference_sizes = os.path.join(self.insertions_dir, 'reference.sizes')
-        reference_insertions_bed = os.path.join(self.insertions_dir, 'reference_insertions.bed')
-        genome_sizes = os.path.join(self.insertions_dir, 'genome.sizes')
-        genome_insertions_bed = os.path.join(self.insertions_dir, 'genome_insertions.bed')
-
-        command = ' '.join(['faidx -i chromsizes', self.reference_fasta, '>', reference_sizes])
-        self.print_and_run(command)
-        command = ' '.join(['faidx -i chromsizes', self.genome_fasta, '>', genome_sizes])
-        self.print_and_run(command)
-
-        command = ' '.join(['bedtools complement',
-                            '-i', reference_aligned_bed,
-                            '-g', reference_sizes,
-                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
-                            '>', reference_insertions_bed])
-        self.print_and_run(command)
-        self.reference_insertions = pandas.read_csv(filepath_or_buffer = reference_insertions_bed, sep = '\t', header = None)
-
-        command = ' '.join(['bedtools complement',
-                            '-i', genome_aligned_bed,
-                            '-g', genome_sizes,
-                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
-                            '>', genome_insertions_bed])
-        self.print_and_run(command)
-        self.genome_insertions = pandas.read_csv(filepath_or_buffer = genome_insertions_bed, sep = '\t', header = None)
-
 
     def draw_features(self) :
 
@@ -1752,15 +1841,25 @@ class Analysis :
             
     def go(self) :
 
-        self.analysis = ['make_output_dir', 'start_logging'] + self.analysis + ['clean_up']
         analysis_string = '\n'.join([str(i+1) + ') ' + self.analysis[i] for i in range(len(self.analysis))])
         print(self.main_process_color + analysis_string + Colors.ENDC)
         
         while (True) :
             step = self.analysis[0]
+
+            ## See if we have arguments to pass to our function
+            if type(step) is list :
+                arguments = []
+                if len(step) > 1 :
+                    arguments = step[1:]
+                step = step[0]
+                function = getattr(self, step)
+                function(*arguments)
+            else :
+                function = getattr(self, step)
+                function()
+
             self.analysis = self.analysis[1:]
-            function = getattr(self, step)
-            function()
 
             if (len(self.analysis) == 0) :
                 break
@@ -1845,7 +1944,12 @@ if __name__ == '__main__':
                         help = 'Run Pilon if Illumina reads are given (default : %(default)s)')
     assembly_group.add_argument('--no-assembly', required = False, default = False, action = 'store_true',
                         help = 'Don\'t assemble the given reads (default : %(default)s)')
-    
+
+
+    # Database/download options
+    download_group = parser.add_argument_group('Database downloading arguments')
+    download_group.add_argument('--download', required = False, default = False, action = 'store_true',
+                                help = 'Attempt to download AMR/Incompatibility group/Plasmid databases if not found locally')
 
     # Plasmid options
     plasmid_group = parser.add_argument_group('Plasmid and vector search options')
@@ -1883,19 +1987,19 @@ if __name__ == '__main__':
                                      help = 'Skip drawing of contigs & Features (default : %(default)s)')
 
 
-    # Which organism are we working with here
-    organism_group = parser.add_argument_group('Organism options')
-    organism_group.add_argument('--reference-dir', required = False, default = reference_dir_default, metavar = '<REFERNCE_DIR>',
+    # Options for comparing to a reference genome
+    reference_group = parser.add_argument_group('Reference options')
+    reference_group.add_argument('--reference-dir', required = False, default = reference_dir_default, metavar = '<REFERNCE_DIR>',
                                 help = 'Directory containing refrence organisms (default : %(default)s)' )
-    organism_group.add_argument('--organism', required = False, default = None, metavar = '<ORGANISM>',
+    reference_group.add_argument('--organism', required = False, default = None, metavar = '<ORGANISM>',
                         help = 'Reference organism to compare against')
-    organism_group.add_argument('--list-organisms', required = False, action = 'store_true',
+    reference_group.add_argument('--list-organisms', required = False, action = 'store_true',
                              help = 'List the reference organisms available to this pipeline')
-    organism_group.add_argument('--no-reference', required = False, action = 'store_true',
-                             help = 'Skip reference organism comparison')
-    organism_group.add_argument('--no-mutations', required = False, action = 'store_true',
-                             help = 'Skip looking for AMR conferring mutations')
-    
+    reference_group.add_argument('--reference-genome', required = False, default = None, metavar = '<GENOME_FASTA>',
+                        help = 'Reference genome to compare against (default : %(default)s)')
+    reference_group.add_argument('--mutation-regions', required = False, default = None, metavar = '<REGION_BED>',
+                        help = 'Regions in the reference genome to screen for mutations (default : %(default)s)')
+
     
     # Other arguments
     other_group = parser.add_argument_group('Other options')
@@ -1925,12 +2029,13 @@ if __name__ == '__main__':
     analysis.validate_options()
     
     if len(analysis.errors) > 0 :
-        print(Colors.HEADER)
-        parser.print_help()
-        print(Colors.ENDC)
+        #print(Colors.HEADER)
+        #parser.print_help()
+        #print(Colors.ENDC)
         print(Colors.FAIL + '\n\nErrors:')
         [print(i) for i in analysis.errors]
         print(Colors.ENDC)
+        print('Use --help to see options')
         sys.exit()
 
     #If we're still good, start the actual analysis
