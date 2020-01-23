@@ -199,7 +199,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     printif(paste('Found', length(targetNames), 'target names for', length(targetIDs), 'targets.'), verbosity > 0)
     
     targetNames = gsub('^>.*\\| ', '', targetNames)
-    targetNames = gsub('^>.', '', targetNames)
+    targetNames = gsub('^>[^ ]+', '', targetNames)
     plasmidHits = cbind(plasmidHits, targetIDs, targetNames)
     printif(paste('Named hits:', nrow(plasmidHits)), verbosity > 1)
     
