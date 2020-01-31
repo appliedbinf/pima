@@ -62,7 +62,6 @@ class Analysis :
         self.ont_fast5 = opts.ont_fast5
         self.ont_fast5_limit = opts.ont_fast5_limit
         self.basecaller = opts.basecaller
-        self.no_trim = opts.no_trim
         self.albacore_seq_files_file = opts.albacore_seq_file
         self.barcode_min_fraction = 2.5
         self.ont_fastq = opts.ont_fastq
@@ -400,7 +399,7 @@ class Analysis :
         
     def validate_qcat(self) :
 
-        if self.no_trim :
+        if not self.multiplexed :
             return
 
         if self.demux != 'qcat' :
@@ -418,7 +417,7 @@ class Analysis :
         
     def validate_porechop(self) :
         
-        if self.no_trim :
+        if not self.multiplexed :
             return
 
         if self.demux != 'porechop' :
@@ -913,6 +912,8 @@ class Analysis :
         # Make sure the merged FASTQ file exists and has size > 0
         self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after albacore', 'is empty')
 
+        self.ont_fastq = self.ont_raw_fastq
+
         
     def porechop_ont_fastq(self) :
 
@@ -986,7 +987,6 @@ class Analysis :
 
         for barcode in self.barcodes :
             barcode_analysis = copy.deepcopy(self)
-            barcode_analysis.no_trim = True
             barcode_analysis.multiplexed = False
             barcode_analysis.output_dir = os.path.join(self.output_dir, barcode)
             barcode_analysis.ont_fastq = os.path.join(self.demultiplexed_dir, barcode + '.fastq')
@@ -1147,6 +1147,7 @@ class Analysis :
 
         self.load_genome()
 
+        
     def racon_ont_assembly(self) :
 
         self.racon_dir = os.path.join(self.output_dir, 'racon')
@@ -1712,7 +1713,7 @@ class Analysis :
         plasmid_sam = os.path.join(self.plasmid_dir, 'plasmid_hits.sam')
         stderr_file = os.path.join(self.plasmid_dir, 'minimap.stderr')
         command = ' '.join(['minimap2',
-                            '-k 20 -p .333 -a',
+                            '-k 20 -p .2 -a',
                             '-t', str(self.threads),
                             self.genome_fasta,
                             self.plasmid_database,
@@ -1727,7 +1728,7 @@ class Analysis :
         command = ' '.join(['sam2psl.py',
                             '-i', plasmid_sam,
                             '-o', plasmid_psl,
-                            '1>', stdout_file, '>2', stderr_file])
+                            '1>', stdout_file, '2>', stderr_file])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig PSL', 'cannot be found', 'is empty')
 
@@ -1790,7 +1791,14 @@ class Analysis :
                     features_to_plot += [GraphicFeature(start = i[1], end = i[2], label = i[3], strand = 1*i[5], color = self.feature_colors[feature_number])]
                     
                 feature_sets_to_plot[feature_name] = features_to_plot
-                
+
+            # Add blank feature sets for the header and ruler
+            real_sets = feature_sets_to_plot.index.tolist()
+            empty_set = [GraphicFeature(start = 1, end = len(contig), color = '#FFFFFF')]
+            #feature_sets_to_plot['header'] = empty_set
+            #feature_sets_to_plot['footer'] = empty_set
+            #feature_sets_to_plot = feature_sets_to_plot[['header'] + real_sets + ['footer']]
+
             # Figure out high each plot will be on its own for later scaling
             expected_plot_heights = []
             for i in range(len(feature_sets_to_plot)) :
@@ -1900,8 +1908,6 @@ if __name__ == '__main__':
                         help = 'The ONT data are multiplexed (default : %(default)s)')
     input_group.add_argument('--demux', required = False, default = 'qcat', choices = ['qcat', 'porechop'],
                         help = 'Demultiplexer/trimmer to use (default : %(default)s)')
-    input_group.add_argument('--no-trim', required = False, default = False, action = 'store_true',
-                        help = 'Do no trim the ONT reads (default : %(default)s)')
     input_group.add_argument('--error-correct', required = False, default = False, action = 'store_true',
                         help = 'Use LORMA to  error-correct ONT reads (default : %(default)s)')
     input_group.add_argument('--only-basecall', required = False, default = False, action = 'store_true',
@@ -1939,17 +1945,15 @@ if __name__ == '__main__':
     assembly_group.add_argument('--max-nanopolish-coverage', required = False, type = int, default = 100, metavar = '<MAX_COVERAGE>',
                         help = 'Maximum coverage before downsampling nanopolish input (default : %(default)s)')
     assembly_group.add_argument('--albacore-seq-file', required = False, type = str, default = None, metavar = '<ALBACORE_SEQ_FILE>',
-                        help = 'List of albacore sequencing summary files (default : %(default)s)')
+                        help = 'List of albacore sequencing summary files for nanopolish (default : %(default)s)')
     assembly_group.add_argument('--pilon', required = False, default = False, action = 'store_true',
                         help = 'Run Pilon if Illumina reads are given (default : %(default)s)')
-    assembly_group.add_argument('--no-assembly', required = False, default = False, action = 'store_true',
-                        help = 'Don\'t assemble the given reads (default : %(default)s)')
 
 
     # Database/download options
     download_group = parser.add_argument_group('Database downloading arguments')
     download_group.add_argument('--download', required = False, default = False, action = 'store_true',
-                                help = 'Attempt to download AMR/Incompatibility group/Plasmid databases if not found locally')
+                                help = 'Attempt to download AMR/Incompatibility group/Plasmid databases if not found locally.  Use witout other options.')
 
     # Plasmid options
     plasmid_group = parser.add_argument_group('Plasmid and vector search options')
