@@ -4,10 +4,12 @@ import copy
 import csv
 import datetime
 import glob
+import locale
 import logging
 import os
 import re
 import shutil
+import si_prefix
 import subprocess
 import sys
 import time
@@ -22,6 +24,8 @@ import pathos.multiprocessing as mp
 
 from dna_features_viewer import GraphicFeature, GraphicRecord
 import matplotlib.pyplot as plt
+
+from pima_report import PimaReport
 
 pandas.set_option('display.max_colwidth', 200)
 
@@ -58,6 +62,9 @@ class Analysis :
 
         self.input_given = []
 
+        # Date-time information
+        self.start_time = datetime.datetime.now().strftime("%Y-%m-%d")
+        
         # Input options
         self.ont_fast5 = opts.ont_fast5
         self.ont_fast5_limit = opts.ont_fast5_limit
@@ -115,7 +122,7 @@ class Analysis :
         self.organism = opts.organism
         self.reference_fasta = opts.reference_genome
         self.mutation_region_bed = opts.mutation_regions
-        
+
         self.threads = opts.threads
 
         self.errors = []
@@ -125,6 +132,58 @@ class Analysis :
 
         # Don't actully run any commands
         self.fake_run = opts.fake_run
+
+        # Reporting
+        self.versions = pandas.Series()
+        self.report = pandas.Series()
+
+        self.analysis_name = opts.name
+        self.report['name'] = self.analysis_name
+        
+        self.summary_title = 'PIMA run summary'
+        self.report[self.summary_title] = pandas.Series()
+        
+        self.alignment_title = 'Comparison with reference'
+        self.report[self.alignment_title] = None
+
+        self.feature_title = 'Features found in the assembly'
+        self.report[self.feature_title] = None
+
+        self.feature_plot_title = 'Feature annotation plots'
+        self.report[self.feature_plot_title] = None
+        
+        self.mutation_title = 'Mutations'
+        self.report[self.mutation_title] = None
+
+        self.large_indel_title = 'Large insertions & deletions'
+        self.snp_indel_title = 'SNPs and small indels'
+        self.report[self.large_indel_title] = None
+
+        self.plasmid_title = 'Plasmid annotation'
+        self.report[self.plasmid_title] = None
+
+        self.stats_title = 'Assembly statistics'
+        self.report[self.stats_title] = pandas.Series()
+        
+        self.methods_title = 'Methods summary'
+        self.report[self.methods_title] = pandas.Series()
+        self.basecalling_methods = 'Basecalling & processing'
+        self.report[self.methods_title][self.basecalling_methods] = pandas.Series()
+        self.assembly_methods = 'Assembly & polishing'
+        self.report[self.methods_title][self.assembly_methods] = pandas.Series()
+        self.reference_methods = 'Reference comparison'
+        self.report[self.methods_title][self.reference_methods] = pandas.Series()
+        self.feature_methods = 'Feature annotation'
+        self.report[self.methods_title][self.feature_methods] = pandas.Series()
+        self.mutation_methods = 'Mutation screening '
+        self.report[self.methods_title][self.mutation_methods] = pandas.Series()
+        self.plasmid_methods = 'Plasmid annotation'
+        self.report[self.methods_title][self.plasmid_methods] = pandas.Series()
+
+        
+        self.meta_title = 'PIMA meta-information'
+
+
         
         # Verbosity levels and colors
         self.error_color = Colors.FAIL
@@ -135,6 +194,9 @@ class Analysis :
         self.sub_process_verbosity = 2
         self.sub_process_color = Colors.OKBLUE
         self.command_verbosity = 3
+
+        # The report object that we're going to generate
+#        self.pima_report = PimaReport()
         
         # The actual steps to carry out in the analysis held as a list
         self.analysis = []
@@ -152,12 +214,12 @@ class Analysis :
             
     def run_command(self, command) :
         if not self.fake_run :
-            subprocess.call(command, shell = True)
+            return(re.split('\\n', subprocess.check_output(command, shell = True).decode('utf-8')))
 
             
     def print_and_run(self, command) :
         self.print_and_log(command, self.command_verbosity)
-        self.run_command(command)
+        return(self.run_command(command))
 
         
     def validate_file(self, the_file) :
@@ -192,11 +254,16 @@ class Analysis :
             self.errors += [error]
             return False
 
+        
+    def load_fasta(self, fasta) :
+        sequence = pandas.Series()
+        for contig in Bio.SeqIO.parse(fasta, 'fasta') :
+            sequence[contig.id] = contig
+        return(sequence)
+        
             
     def load_genome(self) :
-        self.genome = pandas.Series()
-        for contig in Bio.SeqIO.parse(self.genome_fasta, 'fasta') :
-            self.genome[contig.id] = contig
+        self.genome = self.load_fasta(self.genome_fasta)
 
 
     def download_databases(self) :
@@ -265,6 +332,17 @@ class Analysis :
         command = ' '.join(['bwa index', target,
                             '1>' + bwa_stdout,
                             '2>' + bwa_stderr])
+        self.print_and_run(command)
+
+
+    def dnadiff_fasta(self, reference_fasta, query_fasta, output_prefix) :
+
+        stdout_file, stderr_file = [output_prefix + '.std' + i for i in  ['out', 'err']]
+        command = ' '.join(['dnadiff',
+                            '-p', output_prefix,
+                            reference_fasta,
+                            query_fasta,
+                            '1>' + stdout_file, '2>' + stdout_file])
         self.print_and_run(command)
         
         
@@ -412,6 +490,9 @@ class Analysis :
 
         self.validate_utility('qcat', 'qcat is not on the PATH')
 
+        command = 'qcat --version'
+        self.versions['qcat'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        
         self.analysis += ['qcat_ont_fastq']
 
         
@@ -524,6 +605,9 @@ class Analysis :
         self.will_have_ont_assembly = True
         self.will_have_genome_fasta = True
 
+        command = 'flye --version'
+        self.versions['flye'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        
         self.analysis += ['flye_ont_fastq']
 
             
@@ -540,6 +624,9 @@ class Analysis :
         
         self.validate_utility('racon', 'racon' + ' is not on the PATH (required by --assembler ' + self.assembler +')')
 
+        command = 'racon --version'
+        self.versions['racon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        
         self.analysis += ['racon_ont_assembly']
 
         
@@ -562,6 +649,9 @@ class Analysis :
             
         self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)')
 
+        command = 'medaka --version'
+        self.versions['medaka'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        
         self.analysis += ['medaka_ont_assembly']
 
         
@@ -599,9 +689,17 @@ class Analysis :
         # Assume we want to use Illumina data to polish a given genome or ONT assembly
         if self.ont_fast5 or self.ont_fastq or self.genome_fasta :
             self.validate_utility('pilon', 'pilon is not on the PATH (required by --illumina-fastq with --ont-fastq, --ont-fast, or --genome)')
+
+            command = 'pilon --version'
+            self.versions['pilon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+
             self.analysis += ['pilon_assembly']
         else :
             self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)')
+            
+            command = 'spades.py --version'
+            self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+            
             self.analysis += ['spades_illumina_fastq']
             self.will_have_genome_fasta = True
             
@@ -654,6 +752,9 @@ class Analysis :
         for util in ['makeblastdb', 'blastn', 'bedtools'] :
             if not shutil.which(util) :
                 self.errors += ['Can\'t find ' + util + ' on the PATH']
+            
+            command = util + ' -version'
+            self.versions[util] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
                 
         self.analysis = self.analysis + ['blast_feature_sets']
 
@@ -673,7 +774,10 @@ class Analysis :
         #1 - Check for mummer utils
         for utility in ['dnadiff', 'nucmer', 'mummer'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
-
+            
+        command = 'dnadiff -version 2>&1'
+        self.versions['dnadiff'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[1]).group(0)
+            
         #2 - Check for the reference sequence either as given or in the organism dir
         if self.organism :
             if not os.path.isdir(self.reference_dir) :
@@ -688,8 +792,8 @@ class Analysis :
         if not self.validate_file_and_size(self.reference_fasta) :
             self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
                 
-        if  self.will_have_genome_fasta :
-            self.analysis = self.analysis + ['call_insertions']
+        #if  self.will_have_genome_fasta :
+        self.analysis = self.analysis + ['call_insertions', 'draw_circos']
 
         
     @unless_only_basecall        
@@ -722,7 +826,10 @@ class Analysis :
             
         for utility in ['minimap2', 'samtools', 'bcftools'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
-                
+
+            command = utility + ' --version'
+            self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
+            
         self.analysis = self.analysis + ['call_amr_mutations']
 
         
@@ -734,9 +841,20 @@ class Analysis :
 
         self.print_and_log('Validating plasmid database and utilities', self.main_process_verbosity, self.main_process_color)
         
-        for utility in ['minimap2', 'Rscript', 'R', 'pChunks.R'] :
+        for utility in ['minimap2'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
-        
+
+            command = utility + ' --version'
+            self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
+
+
+        for utility in ['Rscript', 'R'] :
+            self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
+
+            command = utility + ' --version 2>&1'
+            self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
+
+            
         if not self.validate_file_and_size(self.plasmid_database) :
             self.errors += ['Can\'t find plasmid database ' + self.plasmid_database + ' or is size 0.  Try --download?']
             
@@ -744,7 +862,7 @@ class Analysis :
             self.errors += ['Can\'t call plasmids without a genome or an assembly']
 
         self.analysis = self.analysis + ['call_plasmids']
-
+        
     
     @unless_only_basecall
     def validate_draw_features(self) :
@@ -757,6 +875,11 @@ class Analysis :
         
         self.analysis += ['draw_features']
 
+
+    def validate_make_report(self) :
+
+        self.analysis += ['make_report']
+        
 
     def validate_download(self) :
 
@@ -804,6 +927,7 @@ class Analysis :
         self.validate_mutations()
         self.validate_plasmids()
         self.validate_draw_features()
+        self.validate_make_report()
         
         if len(self.analysis) == 0 :
             self.errors = self.errors + ['Nothing to do!']
@@ -867,6 +991,12 @@ class Analysis :
 
         # Make sure the merged FASTQ file exists and has size > 0
         self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after albacore', 'is empty')
+
+        self.ont_fastq = self.ont_raw_fastq
+
+        method = 'ONT reads were basecalled using guppy (v ' + self.versions['guppy'] + ').'
+        self.report[self.methods_title][self.basecalling_methods] = \
+            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
 
         
     def albacore_ont_fast5(self) :
@@ -975,6 +1105,10 @@ class Analysis :
         self.barcode_summary = pandas.read_csv(filepath_or_buffer = barcode_summary_tsv, sep = '\t', header = None)
         self.barcode_summary = self.barcode_summary.loc[self.barcode_summary.iloc[:, 2] >= self.barcode_min_fraction, :] 
         self.barcodes = self.barcode_summary.iloc[:, 0].values
+
+        method = 'ONT reads were demultiplexed and trimmed using qcat (v ' + self.versions['qcat'] + ').'
+        self.report[self.methods_title][self.basecalling_methods] = \
+            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
         
         # In the case of a single barcode just go on as normal, otherwise, make an Analysis for each barcode.
         if len(self.barcodes) == 1 or not self.multiplexed :
@@ -1031,7 +1165,11 @@ class Analysis :
         self.validate_file_and_size_or_error(lorma_fasta, 'LoRMA FASTQ', 'cannot be found after FASTQ conversion', 'is empty')
 
         self.ont_fastq = lorma_fastq
-                
+
+        method = 'Raw ONT basecalls were error-corrected using LoRMA (v ' + self.versions['lordec-correct'] + ').'
+        self.report[self.methods_title][self.basecalling_methods] = \
+            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
+        
         
     def miniasm_ont_fastq(self) :
 
@@ -1147,6 +1285,10 @@ class Analysis :
 
         self.load_genome()
 
+        method = 'ONT reads were assembled using Flye (v ' + self.versions['flye'] + ').'
+        self.report[self.methods_title][self.assembly_methods] = \
+            self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
+
         
     def racon_ont_assembly(self) :
 
@@ -1197,6 +1339,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
 
         self.load_genome()
+
         
     def medaka_ont_assembly(self) :
 
@@ -1230,6 +1373,10 @@ class Analysis :
         
         self.load_genome()
 
+        method = 'The genome assembly was polished using ONT reads and Medaka (v ' + self.versions['medaka'] + ').'
+        self.report[self.methods_title][self.assembly_methods] = \
+            self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
+        
 
     def nanopolish_ont_assembly(self) :
 
@@ -1380,6 +1527,7 @@ class Analysis :
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after SPAdes', 'is empty')
 
         self.load_genome()
+
         
     def spades_illumina_fastq(self) :
 
@@ -1419,6 +1567,10 @@ class Analysis :
         self.print_and_log('Mapping Illumina reads to assembly', self.sub_process_verbosity, self.sub_process_color)
         self.pilon_bam = os.path.join(self.pilon_dir, 'mapping.bam')
         self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, self.pilon_bam)
+        method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + self.versions['minimap2'] + ').'
+        self.report[self.methods_title][self.assembly_methods] = \
+            self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
+        
 
         # Actually run pilon
         self.print_and_log('Running Pilon', self.sub_process_verbosity, self.sub_process_color)
@@ -1438,6 +1590,10 @@ class Analysis :
 
         self.load_genome()
 
+        method = 'The Illumina mappings were then used to error-correct the assembmly with Pilon (v ' + self.versions['pilon'] + ').'
+        self.report[self.methods_title][self.assembly_methods] = \
+            self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
+
         
     def make_blast_database(self, database_fasta) :
 
@@ -1453,6 +1609,9 @@ class Analysis :
     def blast_feature_sets(self) :
 
         self.print_and_log('BLASTing feature sets', self.main_process_verbosity, self.main_process_color)
+
+        # Keep track of feature hits for reporting
+        self.report[self.feature_title] = pandas.Series()
         
         self.features_dir = os.path.join(self.output_dir, 'features')
         os.makedirs(self.features_dir)
@@ -1469,8 +1628,14 @@ class Analysis :
             self.blast_features(feature_fasta, feature_dir, feature_name)
             self.feature_dirs += [feature_dir]
             self.feature_names += [feature_name]
+
+        method = 'The genome assembly was queried for features using blastn (v ' + self.versions['blastn'] + ').  ' + \
+            'Feature hits were clustered using bedtools (v ' + self.versions['bedtools'] + ') ' + \
+            'and the highest scoring hit for each cluster was reported.'
+        self.report[self.methods_title][self.feature_methods] = \
+            self.report[self.methods_title][self.feature_methods].append(pandas.Series(method))
         
-        
+            
     def blast_features(self, feature_fasta, feature_dir, feature_name) :
         
         # Make a directory for the new features
@@ -1523,10 +1688,14 @@ class Analysis :
         # Keep the feature hits for later drawing.  It may be empty, i.e., no feature hits
         try :
             best = pandas.read_csv(filepath_or_buffer = best_bed, sep = '\t', header = None)
-            self.feature_hits[feature_name] = best
         except :
-            return
+            best = pandas.DataFrame()
+            
+        self.feature_hits[feature_name] = best
 
+        # Report the hits for this feature set
+        self.report[self.feature_title][feature_name] = best
+        
         
     def call_insertions(self) :
 
@@ -1536,45 +1705,46 @@ class Analysis :
         self.insertions_dir = os.path.join(self.output_dir, 'insertions')
         os.makedirs(self.insertions_dir)
 
+        # Keep track of indels for reporting
+        self.report[self.large_indel_title] = pandas.Series()
+        
         # Align the assembly against the reference sequence
         self.print_and_log('Running dnadiff against the reference', self.sub_process_verbosity, self.sub_process_color)
         self.dnadiff_prefix = os.path.join(self.insertions_dir, 'vs_reference')
-        stdout_file = os.path.join(self.insertions_dir, 'dnadiff.stdout')
-        stderr_file = os.path.join(self.insertions_dir, 'dnadiff.stderr')
-        command = ' '.join(['dnadiff -p', self.dnadiff_prefix, self.reference_fasta, self.genome_fasta,
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
-        self.print_and_run(command)
-
+        self.dnadiff_fasta(self.reference_fasta, self.genome_fasta, self.dnadiff_prefix)
+        method = 'The genome assembly was aligned against the reference sequencing using dnadiff (v ' + self.versions['dnadiff'] + ').'
+        self.report[self.methods_title][self.reference_methods] = \
+            self.report[self.methods_title][self.reference_methods].append(pandas.Series(method))
+        
         # Pull out the aligned regions of the two genomes
         self.print_and_log('Finding reference and query specific insertions', self.sub_process_verbosity, self.sub_process_color)
-        one_coords = self.dnadiff_prefix + '.1coords'
+        self.one_coords = self.dnadiff_prefix + '.1coords'
         reference_aligned_bed =  os.path.join(self.insertions_dir, 'reference_aligned.bed')
         genome_aligned_bed = os.path.join(self.insertions_dir, 'genome_aligned.bed')
-        command = ' '.join(['cat', one_coords,
+        command = ' '.join(['cat', self.one_coords,
                             '| awk \'{OFS = "\\t"; if ($2 < $1){t = $2; $2 = $1; $1 = t} print $12,$1,$2}\' | sort -k 1,1 -k 2,2n',
                             '>', reference_aligned_bed])
         self.print_and_run(command)
-        command = ' '.join(['cat', one_coords,
+        command = ' '.join(['cat', self.one_coords,
                             '| awk \'{OFS = "\\t"; if ($4 < $3){t = $4; $4 = $3; $3 = t} print $13,$3,$4}\' | sort -k 1,1 -k 2,2n',
                             '>', genome_aligned_bed])
         self.print_and_run(command)
 
         # Find the unaligned regions.  These are our insertions and deletions
-        reference_sizes = os.path.join(self.insertions_dir, 'reference.sizes')
+        self.reference_sizes = os.path.join(self.insertions_dir, 'reference.sizes')
         reference_insertions_bed = os.path.join(self.insertions_dir, 'reference_insertions.bed')
         genome_sizes = os.path.join(self.insertions_dir, 'genome.sizes')
         genome_insertions_bed = os.path.join(self.insertions_dir, 'genome_insertions.bed')
 
-        command = ' '.join(['faidx -i chromsizes', self.reference_fasta, '>', reference_sizes])
+        command = ' '.join(['faidx -i chromsizes', self.reference_fasta, '>', self.reference_sizes])
         self.print_and_run(command)
         command = ' '.join(['faidx -i chromsizes', self.genome_fasta, '>', genome_sizes])
         self.print_and_run(command)
 
         command = ' '.join(['bedtools complement',
                             '-i', reference_aligned_bed,
-                            '-g', reference_sizes,
-                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
+                            '-g', self.reference_sizes,
+                            '| awk \'($3 - $2 >= 25){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
                             '>', reference_insertions_bed])
         self.print_and_run(command)
 
@@ -1587,7 +1757,7 @@ class Analysis :
         command = ' '.join(['bedtools complement',
                             '-i', genome_aligned_bed,
                             '-g', genome_sizes,
-                            '| awk \'($3 - $2 >= 500){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
+                            '| awk \'($3 - $2 >= 25){OFS = "\\t";print $1,$2,$3,($3 - $2)}\'',
                             '>', genome_insertions_bed])
         self.print_and_run(command)
 
@@ -1596,7 +1766,87 @@ class Analysis :
             self.genome_insertions = pandas.read_csv(filepath_or_buffer = genome_insertions_bed, sep = '\t', header = None)
         except :
             self.genome_insertions = pandas.DataFrame() # Default to an empty DF
+
+        # Report the large indels
+        self.report[self.large_indel_title]['Reference insertions'] = self.reference_insertions
+        self.report[self.large_indel_title]['Query insertions'] = self.genome_insertions
         
+        method = 'Large insertions or deletions were found as the complement of aligned ' + \
+            'regions using bedtools (v ' + self.versions['bedtools'] + ').'
+        self.report[self.methods_title][self.reference_methods] = \
+            self.report[self.methods_title][self.reference_methods].append(pandas.Series(method))
+
+        # Also pull in the number of SNPs and small indels
+        genome_snps = self.dnadiff_prefix + '.snps'
+        snps = pandas.read_csv(filepath_or_buffer = genome_snps, sep = '\t', header = None)
+        self.small_indels = snps.loc[(snps.iloc[:, 1] == '.') | (snps.iloc[:, 2] == '.'), :]
+        self.snps = snps.loc[(snps.iloc[:, 1] != '.') & (snps.iloc[:, 2] != '.'), :]
+        
+            
+    def draw_circos(self) :
+
+        self.print_and_log('Drawing Circos plot of assembly v. reference alignment', self.main_process_verbosity, self.main_process_color) 
+
+        # Make the directory for drawings
+        self.circos_dir = os.path.join(self.output_dir, 'circos')
+        os.makedirs(self.circos_dir)
+
+        self.report[self.alignment_title] = pandas.Series()
+        
+        reference_genome = self.load_fasta(self.reference_fasta)
+        reference_contigs = reference_genome.index.tolist()
+
+        # Draw one circos plot for each of the contigs in the reference sequence
+        for contig in reference_contigs :
+
+            self.print_and_log('Drawing Circos plot for ' + contig, self.sub_process_verbosity, self.sub_process_color)
+
+            contig_dir = os.path.join(self.circos_dir, contig)
+            os.makedirs(contig_dir)
+
+            # Pull the aligned regions out of the dnadiff 1coords output
+            contig_alignment_txt = os.path.join(contig_dir, 'alignment.txt')
+            command = ' '.join(['cat', self.one_coords,
+                                '| awk \'$12 == "' + contig + '"\'',
+                                '| awk \'{OFS = "\t";print $(NF - 1),$1,$2}\'',
+                                '| bedtools complement -g', self.reference_sizes, '-i -',
+                                '| awk \'$3 - $2 >= 25\'',
+                                '| bedtools complement -g', self.reference_sizes, '-i -',
+                                '| awk \'{OFS = "\t";print $1,$2,$3}\'',
+                                '| awk \'$1 == "' + contig + '"\'',
+                                '>', contig_alignment_txt])
+            self.print_and_run(command)
+
+            # Pull the gap regions out of the dnadiff 1coords output
+            contig_gap_txt = os.path.join(contig_dir, 'gap.txt')
+            command = ' '.join(['cat', self.one_coords,
+                                '| awk \'$12 == "' + contig + '"\'',
+                                '| awk \'{OFS = "\t";print $(NF - 1),$1,$2}\'',
+                                '| bedtools complement -g', self.reference_sizes, '-i -',
+                                '| awk \'$3 - $2 >= 25\'',
+                                '| awk \'{OFS = "\t";print $1,$2,$3}\'',
+                                '| awk \'$1 == "' + contig + '"\'',
+                                '>', contig_gap_txt])
+            self.print_and_run(command)
+            
+            contig_karyotype_txt = os.path.join(contig_dir, 'karyotype.txt')
+            command = ' '.join(['faidx -i chromsizes', self.reference_fasta,
+                                '| awk \'$1 == "' + contig + '"\'',
+                                '| awk \'{OFS = "\t";print "chr\t-",$1,$1,0,$2,"plasmid_grey"}\''
+                                '>', contig_karyotype_txt])
+            self.print_and_run(command)
+
+            circos_conf = os.path.join(data_dir, 'circos.conf')
+            command = ' '.join(['(cd', contig_dir,
+                                '&& circos --conf', circos_conf, ')'])
+            self.print_and_run(command)
+
+            # Keep track of images for the report
+            circos_png = os.path.join(contig_dir, 'circos.png')
+            self.report[self.alignment_title][contig] = circos_png
+#            self.report[self.alignment_title][contig]['image'] = circos_svg
+#            self.report[self.alignment_title][contig]['contig'] = contig
+
             
     def call_amr_mutations(self) :
         
@@ -1604,6 +1854,8 @@ class Analysis :
 
         # Start of table of mutation results
         self.amr_mutations = None
+        self.report[self.mutation_title] = pandas.Series()
+        
         
         # Make the directory for new assembly files
         self.mutations_dir = os.path.join(self.output_dir, 'mutations')
@@ -1613,16 +1865,23 @@ class Analysis :
         self.reference_mapping_bam = os.path.join(self.mutations_dir, 'reference_mapping.bam')
         if self.illumina_fastq :
             self.minimap_illumina_fastq(self.reference_fasta, self.illumina_fastq, self.reference_mapping_bam)
+            kind_of_reads = 'Illumina'
         else :
             self.minimap_ont_fastq(self.reference_fasta, self.ont_fastq, self.reference_mapping_bam)
+            kind_of_reads = 'ONT'
         self.index_bam(self.reference_mapping_bam)
+
+        methods = kind_of_reads + ' reads were mapped to the reference sequence using minimap2 (v ' + self.versions['minimap2'] + ').'
+        self.report[self.methods_title][self.mutation_methods] = \
+            self.report[self.methods_title][self.mutation_methods].append(pandas.Series(methods))
 
         # Pull out each region, one at a time
         region_data = pandas.read_csv(filepath_or_buffer = self.mutation_region_bed, sep = '\t', header = None)
         region_data.columns = ['contig', 'start', 'stop', 'description']
         for region_i in range(region_data.shape[0]) :
-            region_i_description = region_data.loc[region_i,'description']
-            self.print_and_log('Finding AMR mutations for ' + region_i_description,
+            
+            region_description = region_data.loc[region_i,'description']
+            self.print_and_log('Finding AMR mutations for ' + region_description,
                                self.sub_process_verbosity, self.sub_process_color)
             region_dir = os.path.join(self.mutations_dir, 'region_' + str(region_i))
             os.mkdir(region_dir)
@@ -1680,9 +1939,10 @@ class Analysis :
             self.print_and_run(command)
             self.validate_file_and_size_or_error(region_vcf, 'Region VCF file', 'cannot be found', 'is empty')
 
-            region_mutations = pandas.read_csv(filepath_or_buffer = region_vcf, sep = '\t')
+            region_mutations = pandas.read_csv(filepath_or_buffer = region_vcf, sep = '\t', header = 0)
             region_mutations = pandas.concat([region_mutations,
-                                              pandas.DataFrame(numpy.repeat(region_i_description, region_mutations.shape[0]))], axis = 1)
+                                              pandas.DataFrame(numpy.repeat(region_description, region_mutations.shape[0]))], axis = 1)
+            
             if self.amr_mutations is None :
                self.amr_mutations = region_mutations
                self.amr_mutations.columns.values[len(self.amr_mutations.columns) - 1] = 'sample'
@@ -1690,7 +1950,17 @@ class Analysis :
                 region_mutations.columns = self.amr_mutations.columns
                 self.amr_mutations = self.amr_mutations.append(region_mutations)
 
-                        
+            # Keep track of mutations for reporting
+            self.report[self.mutation_title][region_description] = region_mutations
+            
+
+        method = 'Mutations were identified using ' + \
+            'samtools mpileup (v ' + self.versions['samtools'] +  ') ' + \
+            'and  bcftools (v ' + self.versions['bcftools'] + ')'
+        self.report[self.methods_title][self.mutation_methods] = \
+            self.report[self.methods_title][self.mutation_methods].append(pandas.Series(method))
+        
+            
     def call_plasmids(self) :
 
         self.print_and_log('Calling plasmids', self.main_process_verbosity, self.main_process_color)
@@ -1720,6 +1990,10 @@ class Analysis :
                             '1>', plasmid_sam, '2>', stderr_file])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig SAM', 'cannot be found', 'is empty')
+
+        method = 'The plasmid reference database was queried against the genome assembly using minimap2 (v ' + self.versions['minimap2'] + ').'
+        self.report[self.methods_title][self.plasmid_methods] = \
+            self.report[self.methods_title][self.plasmid_methods].append(pandas.Series(method))
         
         # Turn the SAM file in to a PSL file using the modified sam2psl script
         self.print_and_log('Converting the SAM file to a PSL file', self.sub_process_verbosity, self.sub_process_color)
@@ -1732,6 +2006,10 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig PSL', 'cannot be found', 'is empty')
 
+        method = 'The resulting SAM was converted to a PSL using a custom version of sam2psl.'
+        self.report[self.methods_title][self.plasmid_methods] = \
+            self.report[self.methods_title][self.plasmid_methods].append(pandas.Series(method))
+        
         # Make a BLAST database of the plasmid sequences
         self.make_blast_database(self.plasmid_database)
         
@@ -1751,6 +2029,10 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.plasmid_tsv, 'Plasmid output table', 'cannot be found', 'is empty')
 
+        method = 'Plasmid-to-genome hits were resolved using the pChunks algorithm.'
+        self.report[self.methods_title][self.plasmid_methods] = \
+            self.report[self.methods_title][self.plasmid_methods].append(pandas.Series(method))
+        
         # The final file is in pChunks
         self.plasmid_tsv = os.path.join(self.pchunks_dir, 'plasmids.tsv')
         new_plasmid_tsv = os.path.join(self.plasmid_dir, 'plasmids.tsv')
@@ -1758,27 +2040,35 @@ class Analysis :
         self.print_and_run(command)
         self.plasmid_tsv = new_plasmid_tsv
         
-        self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t', header = None)
+        self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t', header = 0)
+
+        self.report[self.plasmid_title] = self.plasmids
         
 
     def draw_features(self) :
 
         self.print_and_log('Drawing features', self.main_process_verbosity, self.main_process_color)
 
+        self.report[self.feature_plot_title] = pandas.Series()
+        
         self.drawing_dir = os.path.join(self.output_dir, 'drawing')
         os.mkdir(self.drawing_dir)
         figure_width = 13
-
+        
         # Draw one plot per contig for simplicity
         for contig in self.genome :
             
             contig_plot_pdf = os.path.join(self.drawing_dir, contig.id + '.pdf')
+            contig_plot_png = os.path.join(self.drawing_dir, contig.id + '.png')
             
             feature_sets_to_plot = pandas.Series()
             
             for feature_number in range(len(self.feature_hits)) :
+                    
                 feature_name = self.feature_hits.index.to_list()[feature_number]
                 these_features = self.feature_hits[feature_name]
+                if (these_features.shape[0] == 0) :
+                    continue
 
                 contig_features = these_features.loc[these_features.iloc[:,0] == contig.id, :]
                 if (contig_features.shape[0] == 0) :
@@ -1792,6 +2082,9 @@ class Analysis :
                     
                 feature_sets_to_plot[feature_name] = features_to_plot
 
+            if len(feature_sets_to_plot) == 0 :
+                continue
+                
             # Add blank feature sets for the header and ruler
             real_sets = feature_sets_to_plot.index.tolist()
             empty_set = [GraphicFeature(start = 1, end = len(contig), color = '#FFFFFF')]
@@ -1837,6 +2130,15 @@ class Analysis :
                 
             figure.tight_layout()
             figure.savefig(contig_plot_pdf)
+            figure.savefig(contig_plot_png)
+
+            self.report[self.feature_plot_title][contig.id] = contig_plot_png
+
+            
+    def make_report(self) :
+        
+        self.latex_report = PimaReport(self)
+        self.latex_report.make_report()
 
         
     def clean_up(self) :
@@ -1851,7 +2153,7 @@ class Analysis :
 
         analysis_string = '\n'.join([str(i+1) + ') ' + self.analysis[i] for i in range(len(self.analysis))])
         print(self.main_process_color + analysis_string + Colors.ENDC)
-        
+
         while (True) :
             step = self.analysis[0]
 
@@ -1895,7 +2197,7 @@ if __name__ == '__main__':
                         version = 'PIMA microbial genome analysis pipeline (version {})'.format(VERSION))
     
     # Input arguments
-    input_group = parser.add_argument_group('Input and basecalling options')
+    input_group = parser.add_argument_group('Input and basecalilng options')
     input_group.add_argument('--ont-fast5', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory containing ONT FAST5 files')
     input_group.add_argument('--ont-fast5-limit', required = False, type = int, default = None, metavar = '<DIR_COUNT>',
@@ -2007,6 +2309,8 @@ if __name__ == '__main__':
     
     # Other arguments
     other_group = parser.add_argument_group('Other options')
+    other_group.add_argument('--name', required = False, type = str, default = 'Genome', metavar = '<NAME>',
+                             help = 'Name of this analysis for reporting.')
     other_group.add_argument('--threads', required = False, type=int, default = 1, metavar = '<NUM_THREADS>',
                         help = 'Number of worker threads to use (default : %(default)s)')
     other_group.add_argument('--verbosity', required = False, type=int, default = 1, metavar = '<INT>',
