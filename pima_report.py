@@ -75,12 +75,17 @@ class PimaReport :
             return
         
         self.doc.append(NewPage())
-        
+
         with self.doc.create(Section(self.analysis.alignment_title, numbering = False)) :
-            self.doc.create(Subsection('Alignment against chromosome', numbering = False))
+
+            with self.doc.create(Subsection(self.analysis.snp_indel_title, numbering = False)) :
+
+                with self.doc.create(Tabular('ll', width = 2)) as table :
+                    table.add_row(('SNPs', self.analysis.snps.shape[0]))
+                    table.add_row(('Small indels', self.analysis.small_indels.shape[0]))
 
             for contig in alignments.index.tolist() :
-
+                                        
                 contig_title = 'Alignment to ' + contig
                 image_png = alignments[contig]
                 
