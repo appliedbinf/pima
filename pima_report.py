@@ -4,6 +4,7 @@ import pandas
 from si_prefix import si_format
 
 from pylatex import Document, Section, \
+    Command, \
     PageStyle, Head, Foot, MiniPage, \
     simple_page_number, NewPage, \
     LargeText, MediumText, LineBreak, TextColor, \
@@ -12,8 +13,9 @@ from pylatex import Document, Section, \
 
 from pylatex.utils import italic, bold
 
-class PimaReport :
+import os
 
+class PimaReport :
     
     def __init__(self, analysis) :
 
@@ -55,7 +57,10 @@ class PimaReport :
                         table.add_row(('ONT FAST5', self.analysis.ont_fast5))
                     if self.analysis.ont_raw_fastq :
                         table.add_row(('ONT FASTQ', self.analysis.ont_raw_fastq))
-            
+                    if self.analysis.reference_fasta :
+                        table.add_row(('Reference', self.analysis.reference_fasta))
+                        
+                        
             with self.doc.create(Subsection('Assembly statistics', numbering = False)) :
                 with self.doc.create(Tabular('ll', width = 2)) as table :
                     table.add_row(('Contigs', len(self.analysis.genome)))
@@ -87,7 +92,8 @@ class PimaReport :
             for contig in alignments.index.tolist() :
                                         
                 contig_title = 'Alignment to ' + contig
-                image_png = alignments[contig]
+                self.doc.append(Command('graphicspath{{../circos/' + contig + '/}}'))
+                image_png = os.path.basename(alignments[contig])
                 
                 with self.doc.create(Subsection(contig_title, numbering = False)) :
                     with self.doc.create(Figure(position = 'h!')) as figure :
@@ -129,13 +135,15 @@ class PimaReport :
 
         self.doc.append(NewPage())
 
+        self.doc.append(Command('graphicspath{{../drawing/}}'))
+        
         with self.doc.create(Section('Feature plots', numbering = False)) :
 
             self.doc.append('Only contigs with features are shown')
 
             for contig in self.report[self.analysis.feature_plot_title].index.tolist() :
 
-                image_png = self.report[self.analysis.feature_plot_title][contig]
+                image_png = os.path.basename(self.report[self.analysis.feature_plot_title][contig])
                 
                 with self.doc.create(Figure(position = 'h!')) as figure :
                     figure.add_image(image_png, width = '7in')
@@ -233,7 +241,6 @@ class PimaReport :
         self.doc.append(NewPage())
 
         methods = self.report[self.analysis.methods_title]
-        print(methods)
 
         with self.doc.create(Section(self.analysis.methods_title, numbering = False)) :
 
@@ -245,7 +252,12 @@ class PimaReport :
                 with self.doc.create(Subsection(methods_section, numbering = False)) :
 
                     self.doc.append('  '.join(methods[methods_section]))
-        
+
+
+    def make_tex(self) :
+
+        self.doc.generate_tex(self.analysis.report_prefix)
+                    
                     
     def make_report(self) :
 
@@ -260,9 +272,8 @@ class PimaReport :
         self.add_plasmids()
         #self.add_snps()
         self.add_methods()
+        self.make_tex()
         
-        
-        self.doc.generate_pdf("header", clean_tex=False)
 
             
 
