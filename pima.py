@@ -266,6 +266,9 @@ class Analysis :
         self.genome = self.load_fasta(self.genome_fasta)
 
 
+    def load_reference(self) :
+        self.reference = self.load_fasta(self.reference_fasta)
+        
     def download_databases(self) :
 
         self.print_and_log('Downloading missing databases', self.main_process_verbosity, self.main_process_color)
@@ -789,10 +792,12 @@ class Analysis :
                 else :
                     self.reference_fasta = os.path.join(self.organism_dir, 'genome.fasta')
                 
-        if not self.validate_file_and_size(self.reference_fasta) :
+        if  self.validate_file_and_size(self.reference_fasta) :
+            self.load_reference()
+        else :
             self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
-                
-        #if  self.will_have_genome_fasta :
+        
+        # if  self.will_have_genome_fasta :
         self.analysis = self.analysis + ['call_insertions', 'draw_circos']
 
         
@@ -817,7 +822,24 @@ class Analysis :
             return
 
         # Either from the built in set or given as an argument, make sure the file is there
-        if not self.validate_file_and_size(self.mutation_region_bed) :
+        if self.validate_file_and_size(self.mutation_region_bed) :
+            mutation_regions = pandas.read_csv(self.mutation_region_bed, header = None, sep = '\t')
+
+            if mutation_regions.shape[1] != 4 :
+                self.errors += ['Mutation regions should be a four column BED file.']
+                
+            if self.reference_fasta :
+                # Make sure that the positions in the BED file fall within the chromosomes provided in the reference sequence
+                for mutation_region in range(mutation_regions.shape[0]) :
+                    mutation_region = mutation_regions.iloc[mutation_region, :]
+                    if not (mutation_region[0] in self.reference) :
+                        self.errors += ['Mutation region ' + ' '.join(mutation_region.astype(str)) + ' not found in reference genome.']
+                        continue
+                    if mutation_region[1] <= 0 or mutation_region[2] <= 0 :
+                        self.errors += ['Mutation region ' + ' '.join(mutation_region.astype(str)) + ' starts before the reference sequence.']
+                    if mutation_region[1] > len(self.reference[mutation_region[0]].seq) or mutation_region[2] > len(self.reference[mutation_region[0]].seq) :
+                        self.errors += ['Mutation region ' + ' '.join(mutation_region.astype(str)) + ' ends after the reference sequence.']
+        else :
             self.errors += ['Mutation region BED ' + self.mutation_region_bed + ' can\'t be found or is size 0.']
 
         # We need reads to make calls
@@ -829,6 +851,7 @@ class Analysis :
 
             command = utility + ' --version'
             self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
+
             
         self.analysis = self.analysis + ['call_amr_mutations']
 
@@ -878,6 +901,11 @@ class Analysis :
 
     def validate_make_report(self) :
 
+        self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
+        
+        for utility in ['tectonic'] :
+            self.validate_utility(utility, utility + ' is not on the PATH (required for reporting).')
+        
         self.analysis += ['make_report']
         
 
@@ -1166,9 +1194,9 @@ class Analysis :
 
         self.ont_fastq = lorma_fastq
 
-        method = 'Raw ONT basecalls were error-corrected using LoRMA (v ' + self.versions['lordec-correct'] + ').'
-        self.report[self.methods_title][self.basecalling_methods] = \
-            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
+#        method = 'Raw ONT basecalls were error-corrected using LoRMA (v ' + self.versions['lordec-correct'] + ').'
+#        self.report[self.methods_title][self.basecalling_methods] = \
+#            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
         
         
     def miniasm_ont_fastq(self) :
@@ -1265,12 +1293,16 @@ class Analysis :
         flye_output_dir = self.ont_assembly_dir
         flye_stdout, flye_stderr = [os.path.join(self.ont_assembly_dir, 'flye.' + i) for i in ['stdout', 'stderr']]
         flye_fasta = flye_output_dir + '/assembly.fasta'
+        
+        raw_or_corrected = '--nano-raw'
+        if self.error_correct :
+            raw_or_corrected = '--nano-corr'
+            
         command = ' '.join(['flye',
                             '--plasmid',
                             '--asm-coverage 150',
-                            '--nano-raw', self.ont_fastq,
+                            raw_or_corrected, self.ont_fastq,
                             '--meta',
-                            #'--pacbio-raw', self.ont_fastq,
                             '-g', self.genome_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
@@ -2136,9 +2168,26 @@ class Analysis :
 
             
     def make_report(self) :
+
+        self.report_dir = os.path.join(self.output_dir, 'report')
+        os.mkdir(self.report_dir)
+
+        self.report_prefix = os.path.join(self.report_dir, 'report')
+        self.report_tex = self.report_prefix + '.tex'
+        self.report_pdf = self.report_prefix + '.pdf'
         
         self.latex_report = PimaReport(self)
         self.latex_report.make_report()
+
+        self.validate_file_and_size_or_error(self.report_tex, 'Report TEX', 'cannot be found', 'is empty')
+
+        stdout_file, stderr_file = [os.path.join(self.report_dir, 'tectonic.' + i) for i in ['stdout', 'stderr']]        
+        command = ' '.join(['tectonic',
+                           self.report_tex,
+                           '1>' + stdout_file, '2>' + stderr_file])
+        self.print_and_run(command)
+
+        self.validate_file_and_size_or_error(self.report_pdf, 'Report TEX', 'cannot be found', 'is empty')
 
         
     def clean_up(self) :
