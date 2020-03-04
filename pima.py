@@ -9,7 +9,6 @@ import logging
 import os
 import re
 import shutil
-import si_prefix
 import subprocess
 import sys
 import time
@@ -17,6 +16,7 @@ from argparse import ArgumentParser, HelpFormatter
 
 import numpy
 import pandas
+import numpy as np
 import joblib
 
 import Bio.SeqIO
@@ -55,6 +55,39 @@ class Colors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
+
+def nicenumber(x, round):
+    exp = np.floor(np.log10(x))
+    f   = x / 10**exp
+
+    if round:
+        if f < 1.5:
+            nf = 1.
+        elif f < 3.:
+            nf = 2.
+        elif f < 7.:
+            nf = 5.
+        else:
+            nf = 10.
+    else:
+        if f <= 1.:
+            nf = 1.
+        elif f <= 2.:
+            nf = 2.
+        elif f <= 5.:
+            nf = 5.
+        else:
+            nf = 10.
+
+    return nf * 10.**exp
+
+def pretty(low, high, n):
+    range = nicenumber(high - low, False)
+    d     = nicenumber(range / (n-1), True)
+    miny  = np.floor(low  / d) * d
+    maxy  = np.ceil (high / d) * d
+    return np.arange(miny, maxy+0.5*d, d)
+    
     
 class Analysis :
 
@@ -95,6 +128,7 @@ class Analysis :
         self.nanopolish_coverage_max = opts.max_nanopolish_coverage
         self.pilon = opts.pilon
         self.will_have_ont_assembly = False
+        self.contig_info = None
 
         # The assembly itself
         self.genome = pandas.Series()
@@ -130,6 +164,9 @@ class Analysis :
         # How much stuff to print
         self.verbosity = opts.verbosity
 
+        # Files to remove when done
+        self.files_to_clean = []
+        
         # Don't actully run any commands
         self.fake_run = opts.fake_run
 
@@ -268,6 +305,7 @@ class Analysis :
 
     def load_reference(self) :
         self.reference = self.load_fasta(self.reference_fasta)
+
         
     def download_databases(self) :
 
@@ -456,11 +494,15 @@ class Analysis :
 
         for utility in ['guppy_basecaller', 'guppy_aligner', 'guppy_barcoder'] :
                 self.validate_utility(utility, utility + ' is not on the PATH (required by --basecaller guppy)')
-                
+
+        command = 'guppy_basecaller --version'
+        self.versions['guppy'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+
         self.analysis += ['guppy_ont_fast5']
 
             
     def validate_albacore(self) :
+        
         if self.basecaller != 'albacore' :
             return
 
@@ -635,21 +677,18 @@ class Analysis :
         
     @unless_only_basecall
     def validate_medaka(self) :
-        
-        if not self.will_have_ont_assembly :
-            return
 
         if self.no_medaka :
             return
         
+        if not self.will_have_genome_fasta :
+            return
+        
+        if not self.ont_fastq :
+            return
+                
         self.print_and_log('Validating medaka', self.main_process_verbosity, self.main_process_color)
 
-        if not self.ont_fast5 and not self.ont_fastq :
-            self.errors += ['--medaka requires --ont-fast5 and/or --ont-fastq']
-
-        if not self.will_have_genome_fasta :
-            self.errors += ['--medaka requires that a genome be assembled or supplied']
-            
         self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)')
 
         command = 'medaka --version'
@@ -707,6 +746,14 @@ class Analysis :
             self.will_have_genome_fasta = True
             
 
+    @unless_only_basecall
+    def validate_assembly_info(self) :
+
+        self.validate_utility('samtools', 'is not on the PATH')
+
+        self.analysis += ['assembly_info']
+            
+            
     @unless_only_basecall
     def validate_features(self) :
 
@@ -791,11 +838,12 @@ class Analysis :
                     self.errors += ['Can\'t find organism directory ' + self.organism_dir]
                 else :
                     self.reference_fasta = os.path.join(self.organism_dir, 'genome.fasta')
-                
-        if  self.validate_file_and_size(self.reference_fasta) :
-            self.load_reference()
-        else :
-            self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
+
+        if self.reference_fasta :
+            if  self.validate_file_and_size(self.reference_fasta) :
+                self.load_reference()
+            else :
+                self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
         
         # if  self.will_have_genome_fasta :
         self.analysis = self.analysis + ['call_insertions', 'draw_circos']
@@ -901,6 +949,10 @@ class Analysis :
 
     def validate_make_report(self) :
 
+
+        if len(self.analysis) == 0 :
+            return
+        
         self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
         
         for utility in ['tectonic'] :
@@ -948,6 +1000,8 @@ class Analysis :
         self.validate_nanopolish()
         
         self.validate_illumina_fastq()
+
+        self.validate_assembly_info()
 
         self.validate_features()
         self.validate_blast()
@@ -1092,6 +1146,8 @@ class Analysis :
 
     def qcat_ont_fastq(self) :
 
+        self.print_and_log('Demultiplexing and trimming reads with qcat', self.main_process_verbosity, self.main_process_color)
+        
         if not self.ont_fastq_dir :
             self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
             os.makedirs(self.ont_fastq_dir)
@@ -1112,7 +1168,6 @@ class Analysis :
                             '--trim',
                             '--guppy',
                             '--kit RBK004',
-                            '--min-score 40',
                             '-t', str(self.threads),
                             '-f', qcat_input_fastq,
                             '-b', self.demultiplexed_dir,
@@ -1133,7 +1188,7 @@ class Analysis :
         self.barcode_summary = pandas.read_csv(filepath_or_buffer = barcode_summary_tsv, sep = '\t', header = None)
         self.barcode_summary = self.barcode_summary.loc[self.barcode_summary.iloc[:, 2] >= self.barcode_min_fraction, :] 
         self.barcodes = self.barcode_summary.iloc[:, 0].values
-
+        
         method = 'ONT reads were demultiplexed and trimmed using qcat (v ' + self.versions['qcat'] + ').'
         self.report[self.methods_title][self.basecalling_methods] = \
             self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
@@ -1147,6 +1202,8 @@ class Analysis :
             
     def start_barcode_analysis(self) :
 
+        self.print_and_log('Starting analysis of individual barcodes.', self.main_process_verbosity, self.main_process_color)
+        
         for barcode in self.barcodes :
             barcode_analysis = copy.deepcopy(self)
             barcode_analysis.multiplexed = False
@@ -1298,7 +1355,8 @@ class Analysis :
         if self.error_correct :
             raw_or_corrected = '--nano-corr'
             
-        command = ' '.join(['flye',
+        # command = ' '.join(['flye',
+        command = ' '.join(['/storage/hive/project/bio-jordan/aconley3/conda/envs/pima/src/Flye/bin/flye',
                             '--plasmid',
                             '--asm-coverage 150',
                             raw_or_corrected, self.ont_fastq,
@@ -1314,7 +1372,6 @@ class Analysis :
         # We now use the Flye assembly as the genome
         self.genome_fasta = self.ont_assembly_dir + '/assembly.fasta'
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome fasta', 'cannot be found after copying Flye output', 'is empty')
-
         self.load_genome()
 
         method = 'ONT reads were assembled using Flye (v ' + self.versions['flye'] + ').'
@@ -1597,8 +1654,9 @@ class Analysis :
 
         # Map illumina reads onto the assembly
         self.print_and_log('Mapping Illumina reads to assembly', self.sub_process_verbosity, self.sub_process_color)
-        self.pilon_bam = os.path.join(self.pilon_dir, 'mapping.bam')
-        self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, self.pilon_bam)
+        pilon_bam = os.path.join(self.pilon_dir, 'mapping.bam')
+        self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
+        self.files_to_clean += [pilon_bam]
         method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + self.versions['minimap2'] + ').'
         self.report[self.methods_title][self.assembly_methods] = \
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
@@ -1611,7 +1669,7 @@ class Analysis :
         self.pilon_fasta = pilon_prefix + '.fasta'
         command = ' '.join(['pilon',
                             '--genome', self.genome_fasta,
-                            '--frags', self.pilon_bam,
+                            '--frags', pilon_bam,
                             '--output', pilon_prefix,
                             '1>', pilon_stdout,
                             '2>', pilon_stderr])
@@ -1626,6 +1684,29 @@ class Analysis :
         self.report[self.methods_title][self.assembly_methods] = \
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
 
+
+    def assembly_info(self) :
+
+        self.print_and_log('Getting assembly description/coverage', self.main_process_verbosity, self.main_process_color)
+        
+        self.info_dir = os.path.join(self.output_dir, 'info')
+        os.makedirs(self.info_dir)
+
+        if self.ont_fastq :
+            
+            coverage_bam = os.path.join(self.info_dir, 'ont_coverage.bam')
+            self.minimap_ont_fastq(self.genome_fasta, self.ont_fastq, coverage_bam)
+            self.files_to_clean += [coverage_bam]
+            
+            coverage_tsv = os.path.join(self.info_dir, 'ont_coverage.tsv')
+            command = ' '.join(['samtools depth -a', coverage_bam,
+                            '| awk \'{s[$1] += $3; c[$1]++}END{for(i in s){printf "%s\\t%i\\t%.0f\\n", i, c[i], (s[i] / c[i])}}\'',
+                            '>', coverage_tsv])
+            self.print_and_run(command)
+            self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
+
+            self.contig_info = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t')
+        
         
     def make_blast_database(self, database_fasta) :
 
@@ -1711,7 +1792,7 @@ class Analysis :
                             '-b', merge_bed,
                             '-f .9 -F .9 -wao',
                             '| awk \'$7 != "."\'',
-                            '| awk \'{OFS="\\t";locus=$7"\\t"$8"\\t"$9; if($5 > s[locus]){s[locus]=$5;b[locus] = $1"\\t"$2"\\t"$3"\\t"$4"\\t"$5"\\t"$6}}',
+                            '| awk \'{OFS="\\t";locus=$7"\\t"$8"\\t"$9; if($5 > s[locus]){s[locus]=$5;id = sprintf("%.3f", $5); b[locus] = $1"\\t"$2"\\t"$3"\\t"$4"\\t"id"\\t"$6}}',
                             'END{for(i in b){print b[i]}}\'',
                             '| sort -k 1,1 -k2,2n',
                             '>' + best_bed])
@@ -1825,8 +1906,7 @@ class Analysis :
 
         self.report[self.alignment_title] = pandas.Series()
         
-        reference_genome = self.load_fasta(self.reference_fasta)
-        reference_contigs = reference_genome.index.tolist()
+        reference_contigs = self.reference.index.tolist()
 
         # Draw one circos plot for each of the contigs in the reference sequence
         for contig in reference_contigs :
@@ -1836,6 +1916,8 @@ class Analysis :
             contig_dir = os.path.join(self.circos_dir, contig)
             os.makedirs(contig_dir)
 
+            contig_size = len(self.reference[contig].seq)
+            
             # Pull the aligned regions out of the dnadiff 1coords output
             contig_alignment_txt = os.path.join(contig_dir, 'alignment.txt')
             command = ' '.join(['cat', self.one_coords,
@@ -1868,6 +1950,38 @@ class Analysis :
                                 '>', contig_karyotype_txt])
             self.print_and_run(command)
 
+            # Figure out the tick labels to use and where to place them
+            # We don't actually want the last tick
+            tick_at = pretty(1, len(self.reference[contig].seq), 12).astype(int)[:-1]
+            
+            tick_major = tick_at[1] - tick_at[0]
+            tick_minor = tick_major / 5
+            tick_base_conf = os.path.join(data_dir, 'tick_base.conf')
+            tick_conf = os.path.join(contig_dir, 'tick.conf')
+
+            command = ' '.join(['cat', tick_base_conf,
+                                '| awk \'{sub("TICK_MAJOR", "' + str(tick_major) + '", $0);',
+                                'sub("TICK_MINOR", "' + str(tick_minor) + '", $0);print}\'',
+                                '>', tick_conf])
+            self.print_and_run(command)
+            
+            magnitude_powers = [10**9, 10**6, 10**3, 10**0]
+            magnitude_units = ['G', 'M', 'K', '']
+            for i in range(len(magnitude_units)) :
+                if contig_size > magnitude_powers[i] :
+                    magnitude_power = magnitude_powers[i]
+                    magnitude_unit = magnitude_units[i]
+                    break
+            tick_labels = ['{:0.0f}'.format(i / magnitude_power) + magnitude_unit for i in tick_at]
+
+            tick_data = pandas.DataFrame()
+            for i in range(len(tick_labels)) :
+                tick_data = pandas.concat([tick_data, pandas.Series([contig, tick_at[i], tick_at[i], tick_labels[i]])], axis = 1)
+            tick_data = tick_data.transpose()
+            
+            tick_txt = os.path.join(contig_dir, 'tick.txt')
+            tick_data.to_csv(path_or_buf = tick_txt, sep = '\t', header = False, index = False)
+                                         
             circos_conf = os.path.join(data_dir, 'circos.conf')
             command = ' '.join(['(cd', contig_dir,
                                 '&& circos --conf', circos_conf, ')'])
@@ -1876,10 +1990,8 @@ class Analysis :
             # Keep track of images for the report
             circos_png = os.path.join(contig_dir, 'circos.png')
             self.report[self.alignment_title][contig] = circos_png
-#            self.report[self.alignment_title][contig]['image'] = circos_svg
-#            self.report[self.alignment_title][contig]['contig'] = contig
 
-            
+                                         
     def call_amr_mutations(self) :
         
         self.print_and_log('Calling AMR mutations', self.main_process_verbosity, self.main_process_color)
@@ -2197,6 +2309,11 @@ class Analysis :
             command = ' '.join(['cp', self.genome_fasta, final_fasta])
             self.print_and_run(command)
 
+        if len(self.files_to_clean) > 1 :
+            for file in self.files_to_clean :
+                command = 'rm ' + file
+                self.print_and_run(command)
+
             
     def go(self) :
 
@@ -2205,7 +2322,9 @@ class Analysis :
 
         while (True) :
             step = self.analysis[0]
-
+            self.analysis = self.analysis[1:]
+            
+            print(step)
             ## See if we have arguments to pass to our function
             if type(step) is list :
                 arguments = []
@@ -2218,11 +2337,10 @@ class Analysis :
                 function = getattr(self, step)
                 function()
 
-            self.analysis = self.analysis[1:]
-
             if (len(self.analysis) == 0) :
                 break
 
+            
 def main(opts) :
 
     """ 
