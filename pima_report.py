@@ -5,9 +5,9 @@ from si_prefix import si_format
 
 from pylatex import Document, Section, \
     Command, \
-    PageStyle, Head, Foot, MiniPage, \
+    PageStyle, Head, Foot, MiniPage, VerticalSpace, \
     simple_page_number, NewPage, \
-    LargeText, MediumText, LineBreak, TextColor, \
+    LargeText, MediumText, LineBreak, NewLine, TextColor, \
     Subsection, Tabular, Math, TikZ, Axis, \
     Plot, Figure, Matrix, Alignat
 
@@ -28,7 +28,7 @@ class PimaReport :
 
         geometry_options = {"margin": "0.75in"}
         self.doc = Document(geometry_options=geometry_options)
-
+        self.doc.preamble.append(Command('usepackage{float}'))
         
     def add_header(self) :
 
@@ -51,7 +51,7 @@ class PimaReport :
         with self.doc.create(Section(self.analysis.summary_title, numbering = False)) :
 
             with self.doc.create(Subsection('Run information', numbering = False)) :
-                with self.doc.create(Tabular('ll', width = 2)) as table :
+                with self.doc.create(Tabular('lp{4cm}lp{10cm}', width = 2)) as table :
                     table.add_row(('Date', self.analysis.start_time))
                     if self.analysis.ont_fast5 :
                         table.add_row(('ONT FAST5', self.analysis.ont_fast5))
@@ -70,6 +70,20 @@ class PimaReport :
                         genome_size += len(i.seq)
                     genome_size = si_format(genome_size, precision = 1)
                     table.add_row(('Assembly size', genome_size))
+
+                if not (self.analysis.contig_info is None) :
+
+                    self.doc.append(LineBreak())
+                    self.doc.append(VerticalSpace("20pt"))
+                    self.doc.append(LineBreak())
+                    
+                    table_format = 'l' * self.analysis.contig_info.shape[1]
+
+                    with self.doc.create(Tabular(table_format)) as table :
+                        table.add_row(('Contig', 'Length (bp)', 'Coverage (X)'))
+                        table.add_hline()
+                        for i in range(self.analysis.contig_info.shape[0]) :
+                            table.add_row(self.analysis.contig_info.iloc[i, :].values.tolist())
             
 
     def add_alignment(self) :
@@ -96,8 +110,8 @@ class PimaReport :
                 image_png = os.path.basename(alignments[contig])
                 
                 with self.doc.create(Subsection(contig_title, numbering = False)) :
-                    with self.doc.create(Figure(position = 'h!')) as figure :
-                        figure.add_image(image_png, width = '3.5in')
+                    with self.doc.create(Figure(position = 'H')) as figure :
+                        figure.add_image(image_png, width = '5in')
 
 
     def add_features(self) :
@@ -111,20 +125,32 @@ class PimaReport :
             for feature_name in self.report[self.analysis.feature_title].index.tolist() :
 
                 features = self.report[self.analysis.feature_title][feature_name]
-                table_format = 'l' * features.shape[1]
-                
+                table_format = 'l' * (features.shape[1] - 1)
+
                 with self.doc.create(Subsection(feature_name, numbering = False)) :
                     if (features.shape[0] == 0) :
                         self.doc.append('None')
                         continue
 
-                    with self.doc.create(Tabular(table_format)) as table :
-                            table.add_row(('Contig', 'Start', 'Stop', 'Feature', 'Identity', 'Strand'))
+                    for contig in pandas.unique(features.iloc[:, 0]) :
+
+                        self.doc.append(contig)
+
+                        contig_features = features.loc[(features.iloc[:, 0] == contig), :]
+                        
+                        with self.doc.create(Tabular(table_format)) as table :
+                            table.add_row(('Start', 'Stop', 'Feature', 'Identity', 'Strand'))
                             table.add_hline()
-                            for i in range(features.shape[0]) :
-                                table.add_row(features.iloc[i,:].values.tolist())
+                            for i in range(contig_features.shape[0]) :
+                                feature = contig_features.iloc[i, :]
+                                feature[4] = '{:.3f}'.format(feature[4])
+                                table.add_row(feature[1:].values.tolist())
 
-
+                        self.doc.append(LineBreak())
+                        self.doc.append(VerticalSpace("20pt"))
+                        self.doc.append(LineBreak())
+                                        
+                                        
     def add_feature_plots(self) :
 
         if self.report[self.analysis.feature_plot_title] is None :
@@ -227,7 +253,7 @@ class PimaReport :
                 self.doc.append('None')
                 return
 
-            table_format = 'l' * plasmids.iloc[:, 0:6].shape[1]
+            table_format = 'p{0.15\linewidth}p{0.3\linewidth}p{0.1\linewidth}p{0.08\linewidth}p{0.08\linewidth}p{0.08\linewidth}'
 
             with self.doc.create(Tabular(table_format)) as table :
                 table.add_row(('Genome contig', 'Plasmid hit', 'Plasmid acc.', 'Contig size', 'Aliged', 'Plasmid size'))
