@@ -216,11 +216,8 @@ class Analysis :
         self.report[self.methods_title][self.mutation_methods] = pandas.Series()
         self.plasmid_methods = 'Plasmid annotation'
         self.report[self.methods_title][self.plasmid_methods] = pandas.Series()
-
         
         self.meta_title = 'PIMA meta-information'
-
-
         
         # Verbosity levels and colors
         self.error_color = Colors.FAIL
@@ -232,9 +229,6 @@ class Analysis :
         self.sub_process_color = Colors.OKBLUE
         self.command_verbosity = 3
 
-        # The report object that we're going to generate
-#        self.pima_report = PimaReport()
-        
         # The actual steps to carry out in the analysis held as a list
         self.analysis = []
         
@@ -1355,8 +1349,8 @@ class Analysis :
         if self.error_correct :
             raw_or_corrected = '--nano-corr'
             
-        # command = ' '.join(['flye',
-        command = ' '.join(['/storage/hive/project/bio-jordan/aconley3/conda/envs/pima/src/Flye/bin/flye',
+        command = ' '.join(['flye',
+        #command = ' '.join(['/storage/hive/project/bio-jordan/aconley3/conda/envs/pima/src/Flye/bin/flye',
                             '--plasmid',
                             '--asm-coverage 150',
                             raw_or_corrected, self.ont_fastq,
