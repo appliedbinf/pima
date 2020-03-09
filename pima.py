@@ -81,6 +81,7 @@ def nicenumber(x, round):
 
     return nf * 10.**exp
 
+
 def pretty(low, high, n):
     range = nicenumber(high - low, False)
     d     = nicenumber(range / (n-1), True)
@@ -99,6 +100,7 @@ class Analysis :
         self.start_time = datetime.datetime.now().strftime("%Y-%m-%d")
         
         # Input options
+        self.ont_watch = opts.ont_watch
         self.ont_fast5 = opts.ont_fast5
         self.ont_fast5_limit = opts.ont_fast5_limit
         self.basecaller = opts.basecaller
@@ -275,18 +277,27 @@ class Analysis :
             self.print_and_log(' '.join([error_prefix, the_file, presence_suffix]), 0, Colors.FAIL)
             self.error_out()
 
-        if not self.validate_file_size(the_file) and not self.fake_run:
+        if not self.validate_file_size(the_file) and not self.fake_run :
             self.print_and_log(' '.join([error_prefix, the_file, size_suffix]), 0, Colors.FAIL)
             self.error_out()
 
 
     def validate_utility(self, utility, error) :
+
         if not shutil.which(utility) :
             self.errors += [error]
             return False
+        else :
+            return True
 
+
+    def std_files(self, prefix) :
+
+        return([prefix + '.std' + i for i in ['out', 'err']])
+        
         
     def load_fasta(self, fasta) :
+
         sequence = pandas.Series()
         for contig in Bio.SeqIO.parse(fasta, 'fasta') :
             sequence[contig.id] = contig
@@ -294,10 +305,12 @@ class Analysis :
         
             
     def load_genome(self) :
+
         self.genome = self.load_fasta(self.genome_fasta)
 
 
     def load_reference(self) :
+
         self.reference = self.load_fasta(self.reference_fasta)
 
         
@@ -318,31 +331,33 @@ class Analysis :
             
     def minimap_ont_fastq(self, genome, fastq, bam) :
 
-        std_prefix = re.sub('\.bam$', '', bam)  
-        stdout_file, stderr_file = [std_prefix + '.std' + i for i in ['out', 'err']]
+        std_prefix = re.sub('\.bam$', '', bam)
+        minimap_stdout, minimap_stderr = self.std_files(std_prefix)
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
                             '-x map-ont',
                             genome,
                             fastq,
-                            '2>', stderr_file,
+                            '2>' + minimap_stderr,
                             '| samtools sort',
                             '-@', str(self.threads),
                             '-o', bam,
-                            '-T reads.tmp -',
-                            '2>/dev/null'])
+                            '-T reads.tmp -'])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(bam)
         self.index_bam(bam)
 
         
     def minimap_illumina_fastq(self, genome, fastq, bam) :
+
+        std_prefix = re.sub('\.bam$', '', bam)
+        minimap_stdout, minmap_stderr = self.std_files(std_prefix)
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
                             '-x sr',
                             genome,
                             ' '.join(fastq),
-                            '2>/dev/null',
+                            '2>' + minimap_stderr,
                             '| samtools sort',
                             '-@', str(self.threads),
                             '-o', bam,
@@ -360,24 +375,15 @@ class Analysis :
         index_bai = bam + '.bai'
         self.validate_file_and_size_or_error(index_bai)
 
-        
-    def bwa_index(self, target, std_dir) :
-
-        bwa_stdout, bwa_stderr = [os.path.join(std_dir, 'bwa_index.' + i) for i in ['stdout', 'stderr']]
-        command = ' '.join(['bwa index', target,
-                            '1>' + bwa_stdout,
-                            '2>' + bwa_stderr])
-        self.print_and_run(command)
-
 
     def dnadiff_fasta(self, reference_fasta, query_fasta, output_prefix) :
 
-        stdout_file, stderr_file = [output_prefix + '.std' + i for i in  ['out', 'err']]
+        dnadiff_stdout, dnadiff_stderr = self.std_files(output_prefix)
         command = ' '.join(['dnadiff',
                             '-p', output_prefix,
                             reference_fasta,
                             query_fasta,
-                            '1>' + stdout_file, '2>' + stdout_file])
+                            '1>' + dnadiff_stdout, '2>' + dnadiff_stderr])
         self.print_and_run(command)
         
         
@@ -400,6 +406,14 @@ class Analysis :
             function(self)
         return wrapper
 
+    def validate_ont_watch(self) :
+
+        if not self.ont_watch :
+            return
+
+        self.analysis += ['watch_ont']
+
+        
     
     def validate_ont_fast5(self) :
 
@@ -442,6 +456,7 @@ class Analysis :
                 
 
     def validate_ont_fastq(self):
+    
         if not self.ont_fastq :
             return
 
@@ -452,6 +467,7 @@ class Analysis :
 
             
     def validate_genome_fasta(self) :
+    
         if not self.genome_fasta :
             return
 
@@ -465,6 +481,7 @@ class Analysis :
             
 
     def validate_output_dir(self) :
+    
         if not opts.output :
             self.errors += ['No output directory given (--output)']
         elif self.output_dir and os.path.isdir(self.output_dir) and not self.overwrite :
@@ -486,11 +503,12 @@ class Analysis :
 
         self.print_and_log('Validating Guppy basecalling utilities', self.main_process_verbosity, self.main_process_color)
 
-        for utility in ['guppy_basecaller', 'guppy_aligner', 'guppy_barcoder'] :
-                self.validate_utility(utility, utility + ' is not on the PATH (required by --basecaller guppy)')
+        if self.validate_utility('guppy_basecaller', 'guppy_basecaller is not on the PATH.') :
+            command = 'guppy_basecaller --version'
+            self.versions['guppy'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
 
-        command = 'guppy_basecaller --version'
-        self.versions['guppy'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        for utility in ['guppy_aligner', 'guppy_barcoder'] :
+            self.validate_utility(utility, utility + ' is not on the PATH.')
 
         self.analysis += ['guppy_ont_fast5']
 
@@ -527,32 +545,11 @@ class Analysis :
 
         self.print_and_log('Validating qcat demultiplexer', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('qcat', 'qcat is not on the PATH')
-
-        command = 'qcat --version'
-        self.versions['qcat'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        if self.validate_utility('qcat', 'qcat is not on the PATH.') :
+            command = 'qcat --version'
+            self.versions['qcat'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
         self.analysis += ['qcat_ont_fastq']
-
-        
-    def validate_porechop(self) :
-        
-        if not self.multiplexed :
-            return
-
-        if self.demux != 'porechop' :
-            return
-
-        if not (self.ont_fast5 or self.ont_fastq) :
-            return
-
-        self.print_and_log('Validating porechop trimmer/demultiplexer', self.main_process_verbosity, self.main_process_color)
-        self.print_and_log('Warning: Porechop is no longer supported and is only included for older studies; qcat is preferred',
-                           self.warning_verbosity, self.warning_color)
-
-        self.validate_utility('porechop', 'porechop is  not on the PATH (required by --demux porechop)')
-
-        self.analysis += ['porechop_ont_fastq']
 
         
     def validate_lorma(self) :
@@ -590,7 +587,6 @@ class Analysis :
                 
         self.analysis += ['miniasm_ont_fastq']
         self.racon = True
-
                 
         
     @unless_only_basecall
@@ -635,17 +631,15 @@ class Analysis :
 
         if not self.genome_size :
             self.errors += ['Flye requires --genome-size']
-        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_size) :
+        elif not re.match('^[0-9]+(\\.[0-9]+)?[mkMK]$', self.genome_size) :
             self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_size)]
             
+        if self.validate_utility('flye', 'flye is not on the PATH (required by --assembler flye).') :
+            command = 'flye --version'
+            self.versions['flye'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
             
-        self.validate_utility('flye', 'flye is not on the PATH (required by --assembler flye)')
-
         self.will_have_ont_assembly = True
         self.will_have_genome_fasta = True
-
-        command = 'flye --version'
-        self.versions['flye'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
         self.analysis += ['flye_ont_fastq']
 
@@ -661,10 +655,9 @@ class Analysis :
         
         self.print_and_log('Validating racon', self.main_process_verbosity, self.main_process_color)
         
-        self.validate_utility('racon', 'racon' + ' is not on the PATH (required by --assembler ' + self.assembler +')')
-
-        command = 'racon --version'
-        self.versions['racon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        if self.validate_utility('racon', 'racon' + ' is not on the PATH (required by --assembler ' + self.assembler +')') :
+            command = 'racon --version'
+            self.versions['racon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
         self.analysis += ['racon_ont_assembly']
 
@@ -683,10 +676,9 @@ class Analysis :
                 
         self.print_and_log('Validating medaka', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)')
-
-        command = 'medaka --version'
-        self.versions['medaka'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        if self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)') :
+            command = 'medaka --version'
+            self.versions['medaka'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
         self.analysis += ['medaka_ont_assembly']
 
@@ -724,17 +716,15 @@ class Analysis :
         
         # Assume we want to use Illumina data to polish a given genome or ONT assembly
         if self.ont_fast5 or self.ont_fastq or self.genome_fasta :
-            self.validate_utility('pilon', 'pilon is not on the PATH (required by --illumina-fastq with --ont-fastq, --ont-fast, or --genome)')
-
-            command = 'pilon --version'
-            self.versions['pilon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+            if self.validate_utility('pilon', 'pilon is not on the PATH (required by --illumina-fastq).') :
+                command = 'pilon --version'
+                self.versions['pilon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
 
             self.analysis += ['pilon_assembly']
         else :
-            self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)')
-            
-            command = 'spades.py --version'
-            self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+            if self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)') :
+                command = 'spades.py --version'
+                self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
             
             self.analysis += ['spades_illumina_fastq']
             self.will_have_genome_fasta = True
@@ -793,12 +783,10 @@ class Analysis :
         
         self.print_and_log('Validating blast utilities', self.main_process_verbosity, self.main_process_color)
 
-        for util in ['makeblastdb', 'blastn', 'bedtools'] :
-            if not shutil.which(util) :
-                self.errors += ['Can\'t find ' + util + ' on the PATH']
-            
-            command = util + ' -version'
-            self.versions[util] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        for utility in ['makeblastdb', 'blastn', 'bedtools'] :
+            if self.validate_utility(utility, utility + ' isn\'t on the PATH.') :
+                command = utility + ' -version'
+                self.versions[utility] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
                 
         self.analysis = self.analysis + ['blast_feature_sets']
 
@@ -816,11 +804,12 @@ class Analysis :
             return
         
         #1 - Check for mummer utils
-        for utility in ['dnadiff', 'nucmer', 'mummer'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
-            
-        command = 'dnadiff -version 2>&1'
-        self.versions['dnadiff'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[1]).group(0)
+        for utility in ['nucmer', 'mummer'] :
+            self.validate_utility(utility, utility + ' is not on the PATH.')
+
+        if self.validate_utility('dnadiff', 'dnadiff is not on the PATH.') :
+            command = 'dnadiff -version 2>&1'
+            self.versions['dnadiff'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[1]).group(0)
             
         #2 - Check for the reference sequence either as given or in the organism dir
         if self.organism :
@@ -907,18 +896,14 @@ class Analysis :
         self.print_and_log('Validating plasmid database and utilities', self.main_process_verbosity, self.main_process_color)
         
         for utility in ['minimap2'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
-
-            command = utility + ' --version'
-            self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
-
+            if self.validate_utility(utility, utility + ' is not on the PATH.') :
+                command = utility + ' --version'
+                self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
 
         for utility in ['Rscript', 'R'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
-
-            command = utility + ' --version 2>&1'
-            self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
-
+            if self.validate_utility(utility, utility + ' is not on the PATH.' :
+                command = utility + ' --version 2>&1'
+                self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
             
         if not self.validate_file_and_size(self.plasmid_database) :
             self.errors += ['Can\'t find plasmid database ' + self.plasmid_database + ' or is size 0.  Try --download?']
@@ -949,8 +934,7 @@ class Analysis :
         
         self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
         
-        for utility in ['tectonic'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for reporting).')
+        self.validate_utility(utility, 'tectonic is not on the PATH (required for reporting).'
         
         self.analysis += ['make_report']
         
@@ -979,7 +963,6 @@ class Analysis :
         self.validate_albacore()
         
         self.validate_qcat()
-        self.validate_porechop()
         
         self.validate_lorma()
         
@@ -1044,8 +1027,7 @@ class Analysis :
         self.print_and_log('Running Guppy on raw ONT FAST5', self.sub_process_verbosity, self.sub_process_color)
         self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
         os.makedirs(self.ont_fastq_dir)
-        stdout_file = os.path.join(self.ont_fastq_dir, 'guppy.stdout')
-        stderr_file = os.path.join(self.ont_fastq_dir, 'guppy.stderr')
+        guppy_stdout, guppy_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'guppy'))
         
         # Run the basecalling with Guppy
         command = ' '.join(['guppy_basecaller',
@@ -1055,8 +1037,7 @@ class Analysis :
                     '--compress-fastq',
                     '--device "cuda:0"',
                     '--flowcell FLO-MIN106 --kit SQK-RBK004',
-                    '1>' + stdout_file,
-                    '2>' + stderr_file])
+                    '1>' + guppy_stdout, '2>' + guppy_stderr])
         self.print_and_run(command)
 
         # Merge the smaller FASTQ files
@@ -1157,7 +1138,7 @@ class Analysis :
             qcat_input_fastq = self.ont_fastq
             
         self.print_and_log('Running qcat on raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
-        stdout_file, stderr_file = [os.path.join(self.demultiplexed_dir, 'qcat.' + i) for i in ['stdout', 'stderr']]
+        qcat_stdout, qcat_stderr = self.std_files(os.path.join(self.demultiplexed_dir, 'qcat'))
         command = ' '.join(['qcat',
                             '--trim',
                             '--guppy',
@@ -1165,14 +1146,13 @@ class Analysis :
                             '-t', str(self.threads),
                             '-f', qcat_input_fastq,
                             '-b', self.demultiplexed_dir,
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
+                            '1>' + qcat_stdout, '2>' + qcat_stderr])
         self.print_and_run(command)
 
         # Figure out if we need to run multiple analyses, i.e, we have multiple barcodes
         barcode_summary_tsv = os.path.join(self.demultiplexed_dir, 'barcode_summary.tsv')
         command = ' '.join(['cat',
-                           stderr_file,
+                           qcat_stderr,
                            '| grep -E \'barcode[0-9]+\'',
                             '|awk \'{OFS="\\t"; print $1,$2,$(NF - 1)}\'',
                            '>' + barcode_summary_tsv])
@@ -1219,15 +1199,14 @@ class Analysis :
         # Use lordec-correct to ONT reads
         self.print_and_log('Running LoRMA on the ONT reads', self.sub_process_verbosity, self.sub_process_color)
         lorma_fasta, lorma_fastq = [os.path.join(self.ont_fastq_dir, 'lorma.' + i) for i in ['fasta', 'fastq']]
-        lorma_stdout, lorma_stderr = [os.path.join(self.ont_fastq_dir, 'lorma.' + i) for i in ['stdout', 'stderr']]
+        lorma_stdout, lorma_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'lorma'))
         command = ' '.join(['lordec-correct',
                             '-c -s 4 -k 19 -g',
                             '-T', str(self.threads),
                             '-i', self.ont_fastq,
                             '-2', self.ont_fastq,
                             '-o', lorma_fasta,
-                            '1>', lorma_stdout,
-                            '2>', lorma_stderr])
+                            '1>', lorma_stdout, '2>', lorma_stderr])
         self.print_and_run(command)
 
         # Check for LoRMA output
@@ -1339,18 +1318,18 @@ class Analysis :
         self.ont_assembly_dir = os.path.join(self.output_dir, 'ont_assembly')
         os.makedirs(self.ont_assembly_dir)
 
-        # Assemble with Flye.  One step.
+        # Assemble with Flye
         self.print_and_log('Running flye', self.sub_process_verbosity, self.sub_process_color)
         flye_output_dir = self.ont_assembly_dir
-        flye_stdout, flye_stderr = [os.path.join(self.ont_assembly_dir, 'flye.' + i) for i in ['stdout', 'stderr']]
-        flye_fasta = flye_output_dir + '/assembly.fasta'
+        flye_stdout, flye_stderr = self.std_files(os.path.join(self.ont_assembly_dir, 'flye'))
+        flye_fasta = os.path.join(flye_output_dir, 'assembly.fasta')
         
         raw_or_corrected = '--nano-raw'
         if self.error_correct :
             raw_or_corrected = '--nano-corr'
             
-        command = ' '.join(['flye',
-        #command = ' '.join(['/storage/hive/project/bio-jordan/aconley3/conda/envs/pima/src/Flye/bin/flye',
+        #command = ' '.join(['flye',
+        command = ' '.join(['/storage/hive/project/bio-jordan/aconley3/conda/envs/pima/src/Flye/bin/flye',
                             '--plasmid',
                             '--asm-coverage 150',
                             raw_or_corrected, self.ont_fastq,
@@ -1358,8 +1337,7 @@ class Analysis :
                             '-g', self.genome_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
-                            '1>', flye_stdout,
-                            '2>', flye_stderr])
+                            '1>', flye_stdout, '2>', flye_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(flye_fasta, 'Flye fasta', 'cannot be found after flye', 'is empty')
 
@@ -1434,18 +1412,20 @@ class Analysis :
         # Actually run Medaka
         self.print_and_log('Starting medaka', self.sub_process_verbosity, self.sub_process_color)
         self.medaka_fasta = os.path.join(self.medaka_dir, 'consensus.fasta')
-        medaka_stdout, medaka_stderr = [os.path.join(self.medaka_dir, 'medaka.') + i for i in ['stdout', 'stderr']]
+        medaka_stdout, medaka_stderr = self.std_files(os.path.join(self.medaka_dir, 'medaka'))
         command = ' '.join(['medaka_consensus',
                             '-m', 'r941_min_high',
                             '-i', self.ont_raw_fastq,
                             '-d', self.genome_fasta,
                             '-o', self.medaka_dir,
                             '-t', str(self.threads),
-                            '1>' + medaka_stdout,
-                            '2>' + medaka_stderr])
+                            '1>' + medaka_stdout, '2>' + medaka_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.medaka_fasta, 'Medaka FASTA', 'cannot be found after Medaka', 'is empty')
 
+        medaka_bam = os.path.join(self.medaka_dir, 'calls_to_draft.bam')
+        self.files_to_clean += [medaka_bam]
+        
         self.print_and_log('Repairing contig names after Medaka', self.sub_process_verbosity, self.sub_process_color)
         self.genome_fasta = os.path.join(self.medaka_dir, 'assembly.fasta')
         command = ' '.join(['cat', self.medaka_fasta,
@@ -1590,7 +1570,7 @@ class Analysis :
         self.spades_dir = os.path.join(self.output_dir, 'spades')
         os.makedirs(self.spades_dir)
 
-        spades_stdout, spades_stderr = [os.path.join(self.spades_dir, 'spades.' + i) for i in ['stdout', 'stderr']]
+        spades_stdout, spades_stderr = self.std_files(os.path.join(self.spades_dir, 'spades'))
         command = ' '.join(['spades.py',
                             '-1', self.illumina_fastq[0],
                             '-2', self.illumina_fastq[1],
@@ -1598,8 +1578,7 @@ class Analysis :
                             '-t', str(self.threads),
                             '--trusted-contigs', self.genome_fasta,
                             '--careful -k 71,81,91,101',
-                            '1>' + spades_stdout,
-                            '2>' + spades_stderr])
+                            '1>' + spades_stdout, '2>' + spades_stderr])
         self.print_and_run(command)
         self.genome_fasta = os.path.join(self.spades_dir, 'scaffolds.fasta')
 
@@ -1620,15 +1599,14 @@ class Analysis :
         self.spades_dir = os.path.join(self.output_dir, 'spades')
         os.makedirs(self.spades_dir)
 
-        spades_stdout, spades_stderr = [os.path.join(self.spades_dir, 'spades.' + i) for i in ['stdout', 'stderr']]
+        spades_stdout, spades_stderr = self.std_files(os.path.join(self.spades_dir, 'spades'))
         command = ' '.join(['spades.py',
                             '-1', self.illumina_fastq[0],
                             '-2', self.illumina_fastq[1],
                             '-o', self.spades_dir,
                             '-t', str(self.threads),
                             '--careful -k 71,81,91,101',
-                            '1>' + spades_stdout,
-                            '2>' + spades_stderr])
+                            '1>' + spades_stdout, '2>' + spades_stderr])
         self.print_and_run(command)
         self.genome_fasta = os.path.join(self.spades_dir, 'scaffolds.fasta')
 
@@ -1658,15 +1636,14 @@ class Analysis :
 
         # Actually run pilon
         self.print_and_log('Running Pilon', self.sub_process_verbosity, self.sub_process_color)
-        pilon_stdout, pilon_stderr = [os.path.join(self.pilon_dir, 'pilon.' + i) for i in ['stdout', 'stderr']]
+        pilon_stdout, pilon_stderr = self.std_files(os.path.join(self.pilon_dir, 'pilon'))
         pilon_prefix = os.path.join(self.pilon_dir, 'assembly')
         self.pilon_fasta = pilon_prefix + '.fasta'
         command = ' '.join(['pilon',
                             '--genome', self.genome_fasta,
                             '--frags', pilon_bam,
                             '--output', pilon_prefix,
-                            '1>', pilon_stdout,
-                            '2>', pilon_stderr])
+                            '1>', pilon_stdout, '2>', pilon_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.pilon_fasta, 'Pilon FASTA', 'cannot be found after pilon', 'is empty')
         
@@ -1706,10 +1683,9 @@ class Analysis :
 
         self.print_and_log('Making a BLAST database for ' + database_fasta, self.sub_process_verbosity, self.sub_process_color)
         std_prefix = re.sub('\.[^.]*$', '', database_fasta)
-        stdout_file, stderr_file = [std_prefix + '.std' + i for i in ['out', 'err']]
+        stdout_file, stderr_file = self.std_files(std_prefix)
         command = ' '.join(['makeblastdb -in', database_fasta, '-dbtype nucl -parse_seqids',
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
+                            '1>' + stdout_file, '2>' + stderr_file])
         self.print_and_run(command)
 
         
@@ -1751,13 +1727,13 @@ class Analysis :
         # BLASTn the feature set
         blast_output = os.path.join(feature_dir, 'blast_output.tsv')
         self.print_and_log('BLASTing features against the assembly', self.sub_process_verbosity, self.sub_process_color)
-        stderr_file = os.path.join(feature_dir, 'blastn.stderr')
+        blastn_stdout, blastn_stderr = self.std_files(os.path.join(feature_dir, 'blastn'))
         command = ' '.join(['blastn -db', self.genome_fasta,
                             '-query', feature_fasta,
                             '-perc_identity 95.0',
                             '-outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore nident qlen"',
                             '-evalue 1e-10 -out ', blast_output,
-                            '2>' + stderr_file])
+                            '1>' + blastn_stdout, '2>' + blastn_stderr])
         self.print_and_run(command)
 
         # Clean up the results into a handy BED file
@@ -1772,10 +1748,10 @@ class Analysis :
         # Make clusters of AMR hits
         self.print_and_log('Clustering feature hits', self.sub_process_verbosity, self.sub_process_color)
         merge_bed = os.path.join(feature_dir, 'merge.bed')
-        stderr_file = os.path.join(feature_dir, 'bedtools_merge.stderr')
+        merge_stdout, merge_stderr = self.std_files(os.path.join(feature_dir, 'bedtools_merge'))
         command = ' '.join(['bedtools merge -d -30 -i', all_bed,
                             '1>' + merge_bed,
-                            '2>' + stderr_file])
+                            '2>' + merge_stderr])
         self.print_and_run(command)
                             
         # Pick the best hit for each cluster
@@ -1994,7 +1970,6 @@ class Analysis :
         self.amr_mutations = None
         self.report[self.mutation_title] = pandas.Series()
         
-        
         # Make the directory for new assembly files
         self.mutations_dir = os.path.join(self.output_dir, 'mutations')
         os.makedirs(self.mutations_dir)
@@ -2119,16 +2094,19 @@ class Analysis :
         # Query plasmid sequences against the assembly using minimap2
         self.print_and_log('Running minimap2 against the plasmid database', self.sub_process_verbosity, self.sub_process_color)
         plasmid_sam = os.path.join(self.plasmid_dir, 'plasmid_hits.sam')
-        stderr_file = os.path.join(self.plasmid_dir, 'minimap.stderr')
+        minimap_stdout, minimap_stderr = self.std_files(os.path.join(self.plasmid_dir, 'minimap'))
         command = ' '.join(['minimap2',
                             '-k 20 -p .2 -a',
                             '-t', str(self.threads),
                             self.genome_fasta,
                             self.plasmid_database,
-                            '1>', plasmid_sam, '2>', stderr_file])
+                            '1>', plasmid_sam,
+                            '2>', minimap_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig SAM', 'cannot be found', 'is empty')
 
+        self.files_to_clean += [plasmid_sam]
+        
         method = 'The plasmid reference database was queried against the genome assembly using minimap2 (v ' + self.versions['minimap2'] + ').'
         self.report[self.methods_title][self.plasmid_methods] = \
             self.report[self.methods_title][self.plasmid_methods].append(pandas.Series(method))
@@ -2136,11 +2114,11 @@ class Analysis :
         # Turn the SAM file in to a PSL file using the modified sam2psl script
         self.print_and_log('Converting the SAM file to a PSL file', self.sub_process_verbosity, self.sub_process_color)
         plasmid_psl = os.path.join(self.plasmid_dir, 'plasmid_hits.psl')
-        stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'sam2psl.' + i) for i in ['stdout', 'stderr']]
+        sam2psl_stdout, sam2psl_stderr = self.std_files(os.path.join(self.plasmid_dir, 'sam2psl'))
         command = ' '.join(['sam2psl.py',
                             '-i', plasmid_sam,
                             '-o', plasmid_psl,
-                            '1>', stdout_file, '2>', stderr_file])
+                            '1>', sam2psl_stdout, '2>', sam2psl_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig PSL', 'cannot be found', 'is empty')
 
@@ -2287,10 +2265,10 @@ class Analysis :
 
         self.validate_file_and_size_or_error(self.report_tex, 'Report TEX', 'cannot be found', 'is empty')
 
-        stdout_file, stderr_file = [os.path.join(self.report_dir, 'tectonic.' + i) for i in ['stdout', 'stderr']]        
+        tectonic_stdout, tectonic_stderr = self.std_files(os.path.join(self.report_dir, 'tectonic'))
         command = ' '.join(['tectonic',
                            self.report_tex,
-                           '1>' + stdout_file, '2>' + stderr_file])
+                           '1>' + tectonic_stdout, '2>' + tectonic_stderr])
         self.print_and_run(command)
 
         self.validate_file_and_size_or_error(self.report_pdf, 'Report TEX', 'cannot be found', 'is empty')
@@ -2318,7 +2296,6 @@ class Analysis :
             step = self.analysis[0]
             self.analysis = self.analysis[1:]
             
-            print(step)
             ## See if we have arguments to pass to our function
             if type(step) is list :
                 arguments = []
@@ -2359,6 +2336,8 @@ if __name__ == '__main__':
     
     # Input arguments
     input_group = parser.add_argument_group('Input and basecalilng options')
+    input_group.add_argument('--ont-watch', required = False, default = None, metavar = '<ONT_DIR>',
+                        help = 'Directory from an ONT run.')
     input_group.add_argument('--ont-fast5', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory containing ONT FAST5 files')
     input_group.add_argument('--ont-fast5-limit', required = False, type = int, default = None, metavar = '<DIR_COUNT>',
