@@ -101,6 +101,11 @@ class Analysis :
         
         # Input options
         self.ont_watch = opts.ont_watch
+        self.ont_watch_reads_min = opts.ont_watch_min_reads
+        self.ont_watch_time_max = opts.ont_watch_max_time
+        self.ont_watch_between_max = 60
+        self.ont_watch_sleep_time = 10
+        
         self.ont_fast5 = opts.ont_fast5
         self.ont_fast5_limit = opts.ont_fast5_limit
         self.basecaller = opts.basecaller
@@ -115,6 +120,8 @@ class Analysis :
         self.error_correct = opts.error_correct
         self.illumina_fastq = opts.illumina_fastq
         self.genome_fasta = opts.genome
+
+        self.will_have_ont_fastq = False
         self.will_have_genome_fasta = False
         
         self.output_dir = opts.output
@@ -406,21 +413,36 @@ class Analysis :
             function(self)
         return wrapper
 
+
     def validate_ont_watch(self) :
 
         if not self.ont_watch :
             return
 
+        self.print_and_log('Validating ONT watch dir and utilities', self.main_process_verbosity, self.main_process_color)
+
+        if self.ont_fast5 :
+            self.errors += ['--ont-watch and --ont-fast5 are mutually exclusive.']
+
+        if self.ont_fastq : 
+            self.errors += ['--ont-watch and --ont-fastq are mutually exclusive.']
+
+        if self.genome_fasta :
+            self.errors += ['--ont-watch and --genome are mutually exclusive.']
+
+        if not os.path.isdir(self.ont_watch) :
+            self.errors += ['ONT watch directory does not exist.']
+
+        if self.ont_watch_reads_min < 0 :
+            self.errors += ['ONT watch min reads must be > 0.']
+
+        self.will_have_ont_fastq = True
+    
         self.analysis += ['watch_ont']
 
-        
     
     def validate_ont_fast5(self) :
 
-        if self.only_basecall and (not self.ont_fast5 and not self.ont_fastq) :
-            self.errors += ['--only-basecall requires --ont-fast5 or --ont-fastq']
-            return
-        
         if not self.ont_fast5 :
             return
         
@@ -465,6 +487,8 @@ class Analysis :
         if not os.path.isfile(self.ont_fastq) :
             self.errors += ['Input ONT FASTQ file ' + self.ont_fastq + ' cannot be found']
 
+        self.will_have_ont_fastq = True
+
             
     def validate_genome_fasta(self) :
     
@@ -495,7 +519,7 @@ class Analysis :
         if self.basecaller != 'guppy' :
             return
 
-        if not self.ont_fast5 :
+        if not (self.ont_fast5 or self.ont_watch) :
             return
         
         if self.ont_fastq :
@@ -510,7 +534,11 @@ class Analysis :
         for utility in ['guppy_aligner', 'guppy_barcoder'] :
             self.validate_utility(utility, utility + ' is not on the PATH.')
 
-        self.analysis += ['guppy_ont_fast5']
+        self.will_have_ont_fastq = True
+
+
+        if self.ont_fast5 :
+            self.analysis += ['guppy_ont_fast5']
 
             
     def validate_albacore(self) :
@@ -540,7 +568,7 @@ class Analysis :
         if self.demux != 'qcat' :
             return
         
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if not self.will_have_ont_fastq :
             return
 
         self.print_and_log('Validating qcat demultiplexer', self.main_process_verbosity, self.main_process_color)
@@ -571,6 +599,7 @@ class Analysis :
     @unless_only_basecall
     @unless_given_genome
     def validate_miniasm(self) :
+    
         if self.assembler != 'miniasm' :
             return
         
@@ -592,10 +621,11 @@ class Analysis :
     @unless_only_basecall
     @unless_given_genome
     def validate_wtdbg2(self) :
+    
         if self.assembler != 'wtdbg2' :
             return
 
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if not self.will_have_ont_fastq :
             return
         
         self.print_and_log('Validating wtdbg2 utilities', self.main_process_verbosity, self.main_process_color)
@@ -621,14 +651,11 @@ class Analysis :
         if self.assembler != 'flye' :
             return
 
-        if not self.ont_fastq and not self.ont_fast5 :
+        if not self.will_have_ont_fastq :
             return
         
         self.print_and_log('Validating flye utilities', self.main_process_verbosity, self.main_process_color)
         
-        if not self.ont_fast5 and not self.ont_fastq :
-            self.errors += ['Assembly requires --ont-fast5 and/or --ont-fastq']
-
         if not self.genome_size :
             self.errors += ['Flye requires --genome-size']
         elif not re.match('^[0-9]+(\\.[0-9]+)?[mkMK]$', self.genome_size) :
@@ -671,7 +698,7 @@ class Analysis :
         if not self.will_have_genome_fasta :
             return
         
-        if not self.ont_fastq :
+        if not self.will_have_ont_fastq :
             return
                 
         self.print_and_log('Validating medaka', self.main_process_verbosity, self.main_process_color)
@@ -733,6 +760,12 @@ class Analysis :
     @unless_only_basecall
     def validate_assembly_info(self) :
 
+        if not (self.ont_watch or self.ont_fastq or self.ont_fast5 or self.illumina_fastq) :
+            return
+
+        if not self.will_have_genome_fasta :
+            return
+    
         self.validate_utility('samtools', 'is not on the PATH')
 
         self.analysis += ['assembly_info']
@@ -901,7 +934,7 @@ class Analysis :
                 self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
 
         for utility in ['Rscript', 'R'] :
-            if self.validate_utility(utility, utility + ' is not on the PATH.' :
+            if self.validate_utility(utility, utility + ' is not on the PATH.') :
                 command = utility + ' --version 2>&1'
                 self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
             
@@ -928,13 +961,12 @@ class Analysis :
 
     def validate_make_report(self) :
 
-
         if len(self.analysis) == 0 :
             return
         
         self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
         
-        self.validate_utility(utility, 'tectonic is not on the PATH (required for reporting).'
+        self.validate_utility('tectonic', 'tectonic is not on the PATH (required for reporting).')
         
         self.analysis += ['make_report']
         
@@ -956,6 +988,7 @@ class Analysis :
         
     def validate_options(self) :
 
+        self.validate_ont_watch()
         self.validate_ont_fast5()
         self.validate_ont_fastq()
         
@@ -1018,6 +1051,110 @@ class Analysis :
     def start_logging(self):
         self.logging_file = os.path.join(self.output_dir, 'log.txt')
 
+
+    def watch_ont(self) :
+
+        self.print_and_log('Watching ONT run in progress', self.main_process_verbosity, self.main_process_color)
+
+        # Keep track of FAST5 files that have been basecalled
+        seen_fast5 = pandas.Series()
+        guppy_count = 0
+
+        # Where we will keep the guppy output of the FAST5 files
+        self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
+        os.makedirs(self.ont_fastq_dir)
+        
+        watch_dir = os.path.join(self.ont_fastq_dir, 'watch')
+        os.makedirs(watch_dir) 
+    
+        # Loop until either 1) We have enough reads or 2) It's been long enough between FAST5 dumps
+        start_time = time.time()
+        last_check_time = start_time
+
+        # Keep track of the new FASTQ files made so we can merge them later
+        new_fastq = []
+        
+        while (True) :
+
+            # See the whole set of FAST5 files
+            search_string = os.path.join(self.ont_watch, '*.fast5')
+            total_fast5 = pandas.Series(glob.glob(search_string))
+
+            # See how much time has elapsed since the last check
+            check_time = time.time()
+            since_last_check_time = check_time - last_check_time
+            total_time = check_time - start_time
+            last_check_time = check_time   
+
+            # See if the total time has passed the allotted time
+            if total_time >= self.ont_watch_time_max :
+                break
+
+            # Get the set of new FAST5 files currently in the output directory
+            new_fast5 = total_fast5[~total_fast5.isin(seen_fast5)]
+            seen_fast5 = total_fast5
+
+            # See if there are any new FAST5 files
+            if len(new_fast5) == 0 :
+                if since_last_check_time >= self.ont_watch_between_max :
+                    break
+                elif total_time >= self.ont_watch_time_max :
+                    break
+                else :
+                    continue
+
+            # If we do have new FAST5 files, make a directory to basecall them
+            fast5_dir = os.path.join(watch_dir, str(guppy_count))
+            os.makedirs(fast5_dir)
+            guppy_dir = os.path.join(fast5_dir, 'guppy')
+            os.makedirs(guppy_dir)
+    
+            # Link all of the FAST5 files into the new directory
+            for fast5 in new_fast5 :
+
+                # Make a link for each FAST5 in the guppy directory
+                command = ' '.join(['ln -rs',
+                            fast5, fast5_dir])
+                self.print_and_run(command)
+                
+            # Basecall the new FAST5 files with guppy
+            guppy_stdout, guppy_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'guppy'))
+            command = ' '.join(['guppy_basecaller',
+                        '-i', fast5_dir,
+                        '-s', guppy_dir,
+                        '--cpu_threads_per_caller 20',
+                        #'--defice "cuda:0"',
+                        '--flowcell FLO-MIN106 --kit SQK-RBK004',
+                        '1>' + guppy_stdout, '2>' + guppy_stderr])
+            self.print_and_run(command)
+                
+            # Keep track of all of the different FASTQ files produced
+            search_string = os.path.join(guppy_dir, '*.fastq')
+            merged_fastq = os.path.join(guppy_dir, 'ont_raw.fastq')
+            command = ' '.join(['cat', search_string, '>', merged_fastq])
+            self.print_and_run(command)
+
+            # Make sure the merged FASTQ file exists and has size > 0
+            self.validate_file_and_size_or_error(merged_fastq, 'ONT raw FASTQ file', 'cannot be found after guppy', 'is empty.')    
+            new_fastq += [merged_fastq]
+
+            guppy_count += 1
+            time.sleep(self.ont_watch_sleep_time)
+
+        # Merge the smaller FASTQ files
+        self.ont_raw_fastq = os.path.join(self.ont_fastq_dir, 'ont_raw.fastq')
+        command = ' '.join(['cat',
+                    ' '.join(new_fastq),
+                    '>', self.ont_raw_fastq])
+        self.print_and_run(command)
+
+        self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after merging', 'is empty.')
+        self.ont_fastq = self.ont_raw_fastq
+
+        method = 'ONT reads were basecalled using guppy (v ' + self.versions['guppy'] + ').'
+        self.report[self.methods_title][self.basecalling_methods] = \
+            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
+        
         
     def guppy_ont_fast5(self) :
         
@@ -1819,9 +1956,9 @@ class Analysis :
         genome_sizes = os.path.join(self.insertions_dir, 'genome.sizes')
         genome_insertions_bed = os.path.join(self.insertions_dir, 'genome_insertions.bed')
 
-        command = ' '.join(['faidx -i chromsizes', self.reference_fasta, '>', self.reference_sizes])
+        command = ' '.join(['faidx -i chromsizes', self.reference_fasta, ' | sort -k 1,1 -k 2,2n >', self.reference_sizes])
         self.print_and_run(command)
-        command = ' '.join(['faidx -i chromsizes', self.genome_fasta, '>', genome_sizes])
+        command = ' '.join(['faidx -i chromsizes', self.genome_fasta, ' | sort -k1,1 -k2,2n >', genome_sizes])
         self.print_and_run(command)
 
         command = ' '.join(['bedtools complement',
@@ -2338,6 +2475,10 @@ if __name__ == '__main__':
     input_group = parser.add_argument_group('Input and basecalilng options')
     input_group.add_argument('--ont-watch', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory from an ONT run.')
+    input_group.add_argument('--ont-watch-min-reads', required = False, default = 5000000, metavar = '<INT>',
+                        help = 'Minimum number of ONT reads to watch for.' )
+    input_group.add_argument('--ont-watch-max-time', required = False, default = 5000000, metavar = '<INT>',
+                        help = 'Maxmium time to watch for new reads.' )
     input_group.add_argument('--ont-fast5', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory containing ONT FAST5 files')
     input_group.add_argument('--ont-fast5-limit', required = False, type = int, default = None, metavar = '<DIR_COUNT>',
