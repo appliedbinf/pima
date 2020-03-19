@@ -102,8 +102,8 @@ class Analysis :
         # Input options
         self.ont_watch = opts.ont_watch
         self.ont_watch_reads_min = opts.ont_watch_min_reads
-        self.ont_watch_time_max = opts.ont_watch_max_time
-        self.ont_watch_between_max = 60
+        self.ont_watch_time_max = opts.ont_watch_max_time * 60 * 60
+        self.ont_watch_between_max = opts.ont_watch_between_time * 60
         self.ont_watch_sleep_time = 10
         
         self.ont_fast5 = opts.ont_fast5
@@ -117,6 +117,7 @@ class Analysis :
         self.only_basecall = opts.only_basecall
         self.multiplexed = opts.multiplexed
         self.demux = opts.demux
+        self.is_barcode = False
         self.error_correct = opts.error_correct
         self.illumina_fastq = opts.illumina_fastq
         self.genome_fasta = opts.genome
@@ -419,6 +420,9 @@ class Analysis :
         if not self.ont_watch :
             return
 
+        if self.is_barcode :
+            return
+
         self.print_and_log('Validating ONT watch dir and utilities', self.main_process_verbosity, self.main_process_color)
 
         if self.ont_fast5 :
@@ -444,6 +448,9 @@ class Analysis :
     def validate_ont_fast5(self) :
 
         if not self.ont_fast5 :
+            return
+
+        if self.is_barcode :
             return
         
         self.print_and_log('Validating ONT fast5 files and utilities', self.main_process_verbosity, self.main_process_color)
@@ -1098,8 +1105,6 @@ class Analysis :
             if len(new_fast5) == 0 :
                 if since_last_check_time >= self.ont_watch_between_max :
                     break
-                elif total_time >= self.ont_watch_time_max :
-                    break
                 else :
                     continue
 
@@ -1122,8 +1127,8 @@ class Analysis :
             command = ' '.join(['guppy_basecaller',
                         '-i', fast5_dir,
                         '-s', guppy_dir,
-                        '--cpu_threads_per_caller 20',
-                        #'--defice "cuda:0"',
+                        '--compress-fastq',
+                        '--device "cuda:0"',
                         '--flowcell FLO-MIN106 --kit SQK-RBK004',
                         '1>' + guppy_stdout, '2>' + guppy_stderr])
             self.print_and_run(command)
@@ -1138,8 +1143,23 @@ class Analysis :
             self.validate_file_and_size_or_error(merged_fastq, 'ONT raw FASTQ file', 'cannot be found after guppy', 'is empty.')    
             new_fastq += [merged_fastq]
 
+            # Keep track of files to clean up
+            search_string = os.path.join(guppy_dir, 'fastq*.fastq')
+            individual_fastq = glob.glob(search_string)
+            self.files_to_clean += individual_fastq
+
+            # If we've passed the minimum number of reads then we stop here
+            total_reads = len(seen_fast5) * 1000
+            if total_reads >= self.ont_watch_reads_min :
+                break
+
             guppy_count += 1
             time.sleep(self.ont_watch_sleep_time)
+
+        # Make sure that we actually called some bases
+        if len(seen_fast5) == 0 :
+            self.print_and_log('No reads were basecalled through --ont-watch.', 0, Colors.FAIL)
+            self.error_out()
 
         # Merge the smaller FASTQ files
         self.ont_raw_fastq = os.path.join(self.ont_fastq_dir, 'ont_raw.fastq')
@@ -1147,6 +1167,7 @@ class Analysis :
                     ' '.join(new_fastq),
                     '>', self.ont_raw_fastq])
         self.print_and_run(command)
+        self.files_to_clean += new_fastq
 
         self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after merging', 'is empty.')
         self.ont_fastq = self.ont_raw_fastq
@@ -1308,7 +1329,7 @@ class Analysis :
         if len(self.barcodes) == 1 or not self.multiplexed :
             self.ont_fastq = os.path.join(self.demultiplexed_dir, self.barcode_summary.iloc[0,0] + '.fastq')
         else :
-            self.analysis = ['start_barcode_analysis']
+            self.analysis = ['start_barcode_analysis', 'clean_up']
 
             
     def start_barcode_analysis(self) :
@@ -1320,6 +1341,8 @@ class Analysis :
             barcode_analysis.multiplexed = False
             barcode_analysis.output_dir = os.path.join(self.output_dir, barcode)
             barcode_analysis.ont_fastq = os.path.join(self.demultiplexed_dir, barcode + '.fastq')
+            barcode_analysis.is_barcode = True
+            barcode_analysis.files_to_clean = []
             barcode_analysis.validate_options()
             barcode_analysis.feature_fastas = self.feature_fastas
             barcode_analysis.go()
@@ -1465,8 +1488,7 @@ class Analysis :
         if self.error_correct :
             raw_or_corrected = '--nano-corr'
             
-        #command = ' '.join(['flye',
-        command = ' '.join(['/storage/hive/project/bio-jordan/aconley3/conda/envs/pima/src/Flye/bin/flye',
+        command = ' '.join(['flye',
                             '--plasmid',
                             '--asm-coverage 150',
                             raw_or_corrected, self.ont_fastq,
@@ -2475,10 +2497,12 @@ if __name__ == '__main__':
     input_group = parser.add_argument_group('Input and basecalilng options')
     input_group.add_argument('--ont-watch', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory from an ONT run.')
-    input_group.add_argument('--ont-watch-min-reads', required = False, default = 5000000, metavar = '<INT>',
+    input_group.add_argument('--ont-watch-min-reads', required = False, type = int, default = 5000000, metavar = '<INT>',
                         help = 'Minimum number of ONT reads to watch for.' )
-    input_group.add_argument('--ont-watch-max-time', required = False, default = 5000000, metavar = '<INT>',
+    input_group.add_argument('--ont-watch-max-time', required = False, type = float, default = 24, metavar = '<HOURS>',
                         help = 'Maxmium time to watch for new reads.' )
+    input_group.add_argument('--ont-watch-between-time', required = False, type = float, default = 15, metavar = '<MINUTES>',
+                        help = 'Maximum to to wait between new FAST5 files')
     input_group.add_argument('--ont-fast5', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory containing ONT FAST5 files')
     input_group.add_argument('--ont-fast5-limit', required = False, type = int, default = None, metavar = '<DIR_COUNT>',
@@ -2629,3 +2653,4 @@ if __name__ == '__main__':
 
     #If we're still good, start the actual analysis
     analysis.go()
+
