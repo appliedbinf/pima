@@ -53,7 +53,7 @@ dependencies:
   - freetype=2.10.0=he983fc9_1
   - fribidi=1.0.5=h516909a_1002
   - gast=0.3.3=py_0
-  - gcc_impl_linux-64=7.3.0=habb00fd_2
+  - gcc_impl_linux-64=7.3.0
   - gcc_linux-64=7.3.0=h553295d_12
   - gdown=3.10.1=py_0
   - gettext=0.19.8.1=hc5be6a0_1002
@@ -69,7 +69,7 @@ dependencies:
   - gsl=2.5=h294904e_1
   - gst-plugins-base=1.14.5=h0935bb2_2
   - gstreamer=1.14.5=h36ae1b5_2
-  - gxx_impl_linux-64=7.3.0=hdf63c60_2
+  - gxx_impl_linux-64=7.3.0
   - gxx_linux-64=7.3.0=h553295d_12
   - h5py=2.7.1=py36_2
   - harfbuzz=2.4.0=h9f30f68_3
