@@ -1052,6 +1052,8 @@ class Analysis :
                     '-i', self.ont_fast5,
                     '-r',
                     '-s', self.ont_fastq_dir,
+                    '--num_callers 14',
+                    '--gpu_runners_per_device 8',
                     '--compress-fastq',
                     '--device "cuda:0"',
                     '--flowcell FLO-MIN106 --kit SQK-RBK004',
@@ -1161,6 +1163,7 @@ class Analysis :
         command = ' '.join(['qcat',
                             '--trim',
                             '--guppy',
+                            '--min-score 65',
                             '--kit RBK004',
                             '-t', str(self.threads),
                             '-f', qcat_input_fastq,
@@ -1436,7 +1439,7 @@ class Analysis :
         self.medaka_fasta = os.path.join(self.medaka_dir, 'consensus.fasta')
         medaka_stdout, medaka_stderr = [os.path.join(self.medaka_dir, 'medaka.') + i for i in ['stdout', 'stderr']]
         command = ' '.join(['medaka_consensus',
-                            '-m', 'r941_min_high',
+                            '-m', 'r941_min_high_g351',
                             '-i', self.ont_raw_fastq,
                             '-d', self.genome_fasta,
                             '-o', self.medaka_dir,
