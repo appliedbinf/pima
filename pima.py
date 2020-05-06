@@ -81,6 +81,7 @@ def nicenumber(x, round):
 
     return nf * 10.**exp
 
+
 def pretty(low, high, n):
     range = nicenumber(high - low, False)
     d     = nicenumber(range / (n-1), True)
@@ -99,6 +100,12 @@ class Analysis :
         self.start_time = datetime.datetime.now().strftime("%Y-%m-%d")
         
         # Input options
+        self.ont_watch = opts.ont_watch
+        self.ont_watch_reads_min = opts.ont_watch_min_reads
+        self.ont_watch_time_max = opts.ont_watch_max_time * 60 * 60
+        self.ont_watch_between_max = opts.ont_watch_between_time * 60
+        self.ont_watch_sleep_time = 10
+        
         self.ont_fast5 = opts.ont_fast5
         self.ont_fast5_limit = opts.ont_fast5_limit
         self.basecaller = opts.basecaller
@@ -110,9 +117,12 @@ class Analysis :
         self.only_basecall = opts.only_basecall
         self.multiplexed = opts.multiplexed
         self.demux = opts.demux
+        self.is_barcode = False
         self.error_correct = opts.error_correct
         self.illumina_fastq = opts.illumina_fastq
         self.genome_fasta = opts.genome
+
+        self.will_have_ont_fastq = False
         self.will_have_genome_fasta = False
         
         self.output_dir = opts.output
@@ -275,18 +285,27 @@ class Analysis :
             self.print_and_log(' '.join([error_prefix, the_file, presence_suffix]), 0, Colors.FAIL)
             self.error_out()
 
-        if not self.validate_file_size(the_file) and not self.fake_run:
+        if not self.validate_file_size(the_file) and not self.fake_run :
             self.print_and_log(' '.join([error_prefix, the_file, size_suffix]), 0, Colors.FAIL)
             self.error_out()
 
 
     def validate_utility(self, utility, error) :
+
         if not shutil.which(utility) :
             self.errors += [error]
             return False
+        else :
+            return True
 
+
+    def std_files(self, prefix) :
+
+        return([prefix + '.std' + i for i in ['out', 'err']])
+        
         
     def load_fasta(self, fasta) :
+
         sequence = pandas.Series()
         for contig in Bio.SeqIO.parse(fasta, 'fasta') :
             sequence[contig.id] = contig
@@ -294,10 +313,12 @@ class Analysis :
         
             
     def load_genome(self) :
+
         self.genome = self.load_fasta(self.genome_fasta)
 
 
     def load_reference(self) :
+
         self.reference = self.load_fasta(self.reference_fasta)
 
         
@@ -318,31 +339,33 @@ class Analysis :
             
     def minimap_ont_fastq(self, genome, fastq, bam) :
 
-        std_prefix = re.sub('\.bam$', '', bam)  
-        stdout_file, stderr_file = [std_prefix + '.std' + i for i in ['out', 'err']]
+        std_prefix = re.sub('\.bam$', '', bam)
+        minimap_stdout, minimap_stderr = self.std_files(std_prefix)
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
                             '-x map-ont',
                             genome,
                             fastq,
-                            '2>', stderr_file,
+                            '2>' + minimap_stderr,
                             '| samtools sort',
                             '-@', str(self.threads),
                             '-o', bam,
-                            '-T reads.tmp -',
-                            '2>/dev/null'])
+                            '-T reads.tmp -'])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(bam)
         self.index_bam(bam)
 
         
     def minimap_illumina_fastq(self, genome, fastq, bam) :
+
+        std_prefix = re.sub('\.bam$', '', bam)
+        minimap_stdout, minmap_stderr = self.std_files(std_prefix)
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
                             '-x sr',
                             genome,
                             ' '.join(fastq),
-                            '2>/dev/null',
+                            '2>' + minimap_stderr,
                             '| samtools sort',
                             '-@', str(self.threads),
                             '-o', bam,
@@ -360,24 +383,15 @@ class Analysis :
         index_bai = bam + '.bai'
         self.validate_file_and_size_or_error(index_bai)
 
-        
-    def bwa_index(self, target, std_dir) :
-
-        bwa_stdout, bwa_stderr = [os.path.join(std_dir, 'bwa_index.' + i) for i in ['stdout', 'stderr']]
-        command = ' '.join(['bwa index', target,
-                            '1>' + bwa_stdout,
-                            '2>' + bwa_stderr])
-        self.print_and_run(command)
-
 
     def dnadiff_fasta(self, reference_fasta, query_fasta, output_prefix) :
 
-        stdout_file, stderr_file = [output_prefix + '.std' + i for i in  ['out', 'err']]
+        dnadiff_stdout, dnadiff_stderr = self.std_files(output_prefix)
         command = ' '.join(['dnadiff',
                             '-p', output_prefix,
                             reference_fasta,
                             query_fasta,
-                            '1>' + stdout_file, '2>' + stdout_file])
+                            '1>' + dnadiff_stdout, '2>' + dnadiff_stderr])
         self.print_and_run(command)
         
         
@@ -400,14 +414,43 @@ class Analysis :
             function(self)
         return wrapper
 
+
+    def validate_ont_watch(self) :
+
+        if not self.ont_watch :
+            return
+
+        if self.is_barcode :
+            return
+
+        self.print_and_log('Validating ONT watch dir and utilities', self.main_process_verbosity, self.main_process_color)
+
+        if self.ont_fast5 :
+            self.errors += ['--ont-watch and --ont-fast5 are mutually exclusive.']
+
+        if self.ont_fastq : 
+            self.errors += ['--ont-watch and --ont-fastq are mutually exclusive.']
+
+        if self.genome_fasta :
+            self.errors += ['--ont-watch and --genome are mutually exclusive.']
+
+        if not os.path.isdir(self.ont_watch) :
+            self.errors += ['ONT watch directory does not exist.']
+
+        if self.ont_watch_reads_min < 0 :
+            self.errors += ['ONT watch min reads must be > 0.']
+
+        self.will_have_ont_fastq = True
+    
+        self.analysis += ['watch_ont']
+
     
     def validate_ont_fast5(self) :
 
-        if self.only_basecall and (not self.ont_fast5 and not self.ont_fastq) :
-            self.errors += ['--only-basecall requires --ont-fast5 or --ont-fastq']
-            return
-        
         if not self.ont_fast5 :
+            return
+
+        if self.is_barcode :
             return
         
         self.print_and_log('Validating ONT fast5 files and utilities', self.main_process_verbosity, self.main_process_color)
@@ -442,6 +485,7 @@ class Analysis :
                 
 
     def validate_ont_fastq(self):
+    
         if not self.ont_fastq :
             return
 
@@ -450,8 +494,11 @@ class Analysis :
         if not os.path.isfile(self.ont_fastq) :
             self.errors += ['Input ONT FASTQ file ' + self.ont_fastq + ' cannot be found']
 
+        self.will_have_ont_fastq = True
+
             
     def validate_genome_fasta(self) :
+    
         if not self.genome_fasta :
             return
 
@@ -465,6 +512,7 @@ class Analysis :
             
 
     def validate_output_dir(self) :
+    
         if not opts.output :
             self.errors += ['No output directory given (--output)']
         elif self.output_dir and os.path.isdir(self.output_dir) and not self.overwrite :
@@ -478,7 +526,7 @@ class Analysis :
         if self.basecaller != 'guppy' :
             return
 
-        if not self.ont_fast5 :
+        if not (self.ont_fast5 or self.ont_watch) :
             return
         
         if self.ont_fastq :
@@ -486,13 +534,18 @@ class Analysis :
 
         self.print_and_log('Validating Guppy basecalling utilities', self.main_process_verbosity, self.main_process_color)
 
-        for utility in ['guppy_basecaller', 'guppy_aligner', 'guppy_barcoder'] :
-                self.validate_utility(utility, utility + ' is not on the PATH (required by --basecaller guppy)')
+        if self.validate_utility('guppy_basecaller', 'guppy_basecaller is not on the PATH.') :
+            command = 'guppy_basecaller --version'
+            self.versions['guppy'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
 
-        command = 'guppy_basecaller --version'
-        self.versions['guppy'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        for utility in ['guppy_aligner', 'guppy_barcoder'] :
+            self.validate_utility(utility, utility + ' is not on the PATH.')
 
-        self.analysis += ['guppy_ont_fast5']
+        self.will_have_ont_fastq = True
+
+
+        if self.ont_fast5 :
+            self.analysis += ['guppy_ont_fast5']
 
             
     def validate_albacore(self) :
@@ -522,37 +575,16 @@ class Analysis :
         if self.demux != 'qcat' :
             return
         
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if not self.will_have_ont_fastq :
             return
 
         self.print_and_log('Validating qcat demultiplexer', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('qcat', 'qcat is not on the PATH')
-
-        command = 'qcat --version'
-        self.versions['qcat'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        if self.validate_utility('qcat', 'qcat is not on the PATH.') :
+            command = 'qcat --version'
+            self.versions['qcat'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
         self.analysis += ['qcat_ont_fastq']
-
-        
-    def validate_porechop(self) :
-        
-        if not self.multiplexed :
-            return
-
-        if self.demux != 'porechop' :
-            return
-
-        if not (self.ont_fast5 or self.ont_fastq) :
-            return
-
-        self.print_and_log('Validating porechop trimmer/demultiplexer', self.main_process_verbosity, self.main_process_color)
-        self.print_and_log('Warning: Porechop is no longer supported and is only included for older studies; qcat is preferred',
-                           self.warning_verbosity, self.warning_color)
-
-        self.validate_utility('porechop', 'porechop is  not on the PATH (required by --demux porechop)')
-
-        self.analysis += ['porechop_ont_fastq']
 
         
     def validate_lorma(self) :
@@ -574,6 +606,7 @@ class Analysis :
     @unless_only_basecall
     @unless_given_genome
     def validate_miniasm(self) :
+    
         if self.assembler != 'miniasm' :
             return
         
@@ -590,16 +623,16 @@ class Analysis :
                 
         self.analysis += ['miniasm_ont_fastq']
         self.racon = True
-
                 
         
     @unless_only_basecall
     @unless_given_genome
     def validate_wtdbg2(self) :
+    
         if self.assembler != 'wtdbg2' :
             return
 
-        if not (self.ont_fast5 or self.ont_fastq) :
+        if not self.will_have_ont_fastq :
             return
         
         self.print_and_log('Validating wtdbg2 utilities', self.main_process_verbosity, self.main_process_color)
@@ -625,27 +658,22 @@ class Analysis :
         if self.assembler != 'flye' :
             return
 
-        if not self.ont_fastq and not self.ont_fast5 :
+        if not self.will_have_ont_fastq :
             return
         
         self.print_and_log('Validating flye utilities', self.main_process_verbosity, self.main_process_color)
         
-        if not self.ont_fast5 and not self.ont_fastq :
-            self.errors += ['Assembly requires --ont-fast5 and/or --ont-fastq']
-
         if not self.genome_size :
             self.errors += ['Flye requires --genome-size']
-        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_size) :
+        elif not re.match('^[0-9]+(\\.[0-9]+)?[mkMK]$', self.genome_size) :
             self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_size)]
             
+        if self.validate_utility('flye', 'flye is not on the PATH (required by --assembler flye).') :
+            command = 'flye --version'
+            self.versions['flye'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
             
-        self.validate_utility('flye', 'flye is not on the PATH (required by --assembler flye)')
-
         self.will_have_ont_assembly = True
         self.will_have_genome_fasta = True
-
-        command = 'flye --version'
-        self.versions['flye'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
         self.analysis += ['flye_ont_fastq']
 
@@ -661,10 +689,9 @@ class Analysis :
         
         self.print_and_log('Validating racon', self.main_process_verbosity, self.main_process_color)
         
-        self.validate_utility('racon', 'racon' + ' is not on the PATH (required by --assembler ' + self.assembler +')')
-
-        command = 'racon --version'
-        self.versions['racon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        if self.validate_utility('racon', 'racon' + ' is not on the PATH (required by --assembler ' + self.assembler +')') :
+            command = 'racon --version'
+            self.versions['racon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
         self.analysis += ['racon_ont_assembly']
 
@@ -678,15 +705,14 @@ class Analysis :
         if not self.will_have_genome_fasta :
             return
         
-        if not self.ont_fastq :
+        if not self.will_have_ont_fastq :
             return
                 
         self.print_and_log('Validating medaka', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)')
-
-        command = 'medaka --version'
-        self.versions['medaka'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        if self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)') :
+            command = 'medaka --version'
+            self.versions['medaka'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
         self.analysis += ['medaka_ont_assembly']
 
@@ -724,22 +750,17 @@ class Analysis :
         
         # Assume we want to use Illumina data to polish a given genome or ONT assembly
         if self.ont_fast5 or self.ont_fastq or self.genome_fasta :
-            self.validate_utility('pilon', 'pilon is not on the PATH (required by --illumina-fastq with --ont-fastq, --ont-fast, or --genome)')
-
-            command = 'minimap2 --version'
-            self.versions['minimap2'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
- 
-            command = 'pilon --version'
-            self.versions['pilon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+            if self.validate_utility('pilon', 'pilon is not on the PATH (required by --illumina-fastq).') :
+                command = 'pilon --version'
+                self.versions['pilon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
 
             self.analysis += ['pilon_assembly']
 
         else :
-            self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)')
-           
-            command = 'spades.py --version'
-            self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
-            
+            if self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)') :
+                command = 'spades.py --version'
+                self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+                
             self.analysis += ['spades_illumina_fastq']
             self.will_have_genome_fasta = True
             
@@ -747,6 +768,12 @@ class Analysis :
     @unless_only_basecall
     def validate_assembly_info(self) :
 
+        if not (self.ont_watch or self.ont_fastq or self.ont_fast5 or self.illumina_fastq) :
+            return
+
+        if not self.will_have_genome_fasta :
+            return
+    
         self.validate_utility('samtools', 'is not on the PATH')
 
         self.analysis += ['assembly_info']
@@ -797,12 +824,10 @@ class Analysis :
         
         self.print_and_log('Validating blast utilities', self.main_process_verbosity, self.main_process_color)
 
-        for util in ['makeblastdb', 'blastn', 'bedtools'] :
-            if not shutil.which(util) :
-                self.errors += ['Can\'t find ' + util + ' on the PATH']
-            
-            command = util + ' -version'
-            self.versions[util] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        for utility in ['makeblastdb', 'blastn', 'bedtools'] :
+            if self.validate_utility(utility, utility + ' isn\'t on the PATH.') :
+                command = utility + ' -version'
+                self.versions[utility] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
                 
         self.analysis = self.analysis + ['blast_feature_sets']
 
@@ -820,11 +845,12 @@ class Analysis :
             return
         
         #1 - Check for mummer utils
-        for utility in ['dnadiff', 'nucmer', 'mummer'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
-            
-        command = 'dnadiff -version 2>&1'
-        self.versions['dnadiff'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[1]).group(0)
+        for utility in ['nucmer', 'mummer'] :
+            self.validate_utility(utility, utility + ' is not on the PATH.')
+
+        if self.validate_utility('dnadiff', 'dnadiff is not on the PATH.') :
+            command = 'dnadiff -version 2>&1'
+            self.versions['dnadiff'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[1]).group(0)
             
         #2 - Check for the reference sequence either as given or in the organism dir
         if self.organism :
@@ -911,18 +937,14 @@ class Analysis :
         self.print_and_log('Validating plasmid database and utilities', self.main_process_verbosity, self.main_process_color)
         
         for utility in ['minimap2'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
-
-            command = utility + ' --version'
-            self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
-
+            if self.validate_utility(utility, utility + ' is not on the PATH.') :
+                command = utility + ' --version'
+                self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
 
         for utility in ['Rscript', 'R'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for plasmid finding)')
-
-            command = utility + ' --version 2>&1'
-            self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
-
+            if self.validate_utility(utility, utility + ' is not on the PATH.') :
+                command = utility + ' --version 2>&1'
+                self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
             
         if not self.validate_file_and_size(self.plasmid_database) :
             self.errors += ['Can\'t find plasmid database ' + self.plasmid_database + ' or is size 0.  Try --download?']
@@ -947,14 +969,12 @@ class Analysis :
 
     def validate_make_report(self) :
 
-
         if len(self.analysis) == 0 :
             return
         
         self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
         
-        for utility in ['tectonic'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for reporting).')
+        self.validate_utility('tectonic', 'tectonic is not on the PATH (required for reporting).')
         
         self.analysis += ['make_report']
         
@@ -976,6 +996,7 @@ class Analysis :
         
     def validate_options(self) :
 
+        self.validate_ont_watch()
         self.validate_ont_fast5()
         self.validate_ont_fastq()
         
@@ -983,7 +1004,6 @@ class Analysis :
         self.validate_albacore()
         
         self.validate_qcat()
-        self.validate_porechop()
         
         self.validate_lorma()
         
@@ -1039,6 +1059,124 @@ class Analysis :
     def start_logging(self):
         self.logging_file = os.path.join(self.output_dir, 'log.txt')
 
+
+    def watch_ont(self) :
+
+        self.print_and_log('Watching ONT run in progress', self.main_process_verbosity, self.main_process_color)
+
+        # Keep track of FAST5 files that have been basecalled
+        seen_fast5 = pandas.Series()
+        guppy_count = 0
+
+        # Where we will keep the guppy output of the FAST5 files
+        self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
+        os.makedirs(self.ont_fastq_dir)
+        
+        watch_dir = os.path.join(self.ont_fastq_dir, 'watch')
+        os.makedirs(watch_dir) 
+    
+        # Loop until either 1) We have enough reads or 2) It's been long enough between FAST5 dumps
+        start_time = time.time()
+        last_check_time = start_time
+
+        # Keep track of the new FASTQ files made so we can merge them later
+        new_fastq = []
+        
+        while (True) :
+
+            # See the whole set of FAST5 files
+            search_string = os.path.join(self.ont_watch, '*.fast5')
+            total_fast5 = pandas.Series(glob.glob(search_string))
+
+            # See how much time has elapsed since the last check
+            check_time = time.time()
+            since_last_check_time = check_time - last_check_time
+            total_time = check_time - start_time
+            last_check_time = check_time   
+
+            # See if the total time has passed the allotted time
+            if total_time >= self.ont_watch_time_max :
+                break
+
+            # Get the set of new FAST5 files currently in the output directory
+            new_fast5 = total_fast5[~total_fast5.isin(seen_fast5)]
+            seen_fast5 = total_fast5
+
+            # See if there are any new FAST5 files
+            if len(new_fast5) == 0 :
+                if since_last_check_time >= self.ont_watch_between_max :
+                    break
+                else :
+                    continue
+
+            # If we do have new FAST5 files, make a directory to basecall them
+            fast5_dir = os.path.join(watch_dir, str(guppy_count))
+            os.makedirs(fast5_dir)
+            guppy_dir = os.path.join(fast5_dir, 'guppy')
+            os.makedirs(guppy_dir)
+    
+            # Link all of the FAST5 files into the new directory
+            for fast5 in new_fast5 :
+
+                # Make a link for each FAST5 in the guppy directory
+                command = ' '.join(['ln -rs',
+                            fast5, fast5_dir])
+                self.print_and_run(command)
+                
+            # Basecall the new FAST5 files with guppy
+            guppy_stdout, guppy_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'guppy'))
+            command = ' '.join(['guppy_basecaller',
+                        '-i', fast5_dir,
+                        '-s', guppy_dir,
+                        '--compress-fastq',
+                        '--device "cuda:0"',
+                        '--flowcell FLO-MIN106 --kit SQK-RBK004',
+                        '1>' + guppy_stdout, '2>' + guppy_stderr])
+            self.print_and_run(command)
+                
+            # Keep track of all of the different FASTQ files produced
+            search_string = os.path.join(guppy_dir, '*.fastq')
+            merged_fastq = os.path.join(guppy_dir, 'ont_raw.fastq')
+            command = ' '.join(['cat', search_string, '>', merged_fastq])
+            self.print_and_run(command)
+
+            # Make sure the merged FASTQ file exists and has size > 0
+            self.validate_file_and_size_or_error(merged_fastq, 'ONT raw FASTQ file', 'cannot be found after guppy', 'is empty.')    
+            new_fastq += [merged_fastq]
+
+            # Keep track of files to clean up
+            search_string = os.path.join(guppy_dir, 'fastq*.fastq')
+            individual_fastq = glob.glob(search_string)
+            self.files_to_clean += individual_fastq
+
+            # If we've passed the minimum number of reads then we stop here
+            total_reads = len(seen_fast5) * 1000
+            if total_reads >= self.ont_watch_reads_min :
+                break
+
+            guppy_count += 1
+            time.sleep(self.ont_watch_sleep_time)
+
+        # Make sure that we actually called some bases
+        if len(seen_fast5) == 0 :
+            self.print_and_log('No reads were basecalled through --ont-watch.', 0, Colors.FAIL)
+            self.error_out()
+
+        # Merge the smaller FASTQ files
+        self.ont_raw_fastq = os.path.join(self.ont_fastq_dir, 'ont_raw.fastq')
+        command = ' '.join(['cat',
+                    ' '.join(new_fastq),
+                    '>', self.ont_raw_fastq])
+        self.print_and_run(command)
+        self.files_to_clean += new_fastq
+
+        self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after merging', 'is empty.')
+        self.ont_fastq = self.ont_raw_fastq
+
+        method = 'ONT reads were basecalled using guppy (v ' + self.versions['guppy'] + ').'
+        self.report[self.methods_title][self.basecalling_methods] = \
+            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
+        
         
     def guppy_ont_fast5(self) :
         
@@ -1048,8 +1186,7 @@ class Analysis :
         self.print_and_log('Running Guppy on raw ONT FAST5', self.sub_process_verbosity, self.sub_process_color)
         self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
         os.makedirs(self.ont_fastq_dir)
-        stdout_file = os.path.join(self.ont_fastq_dir, 'guppy.stdout')
-        stderr_file = os.path.join(self.ont_fastq_dir, 'guppy.stderr')
+        guppy_stdout, guppy_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'guppy'))
         
         # Run the basecalling with Guppy
         command = ' '.join(['guppy_basecaller',
@@ -1061,8 +1198,7 @@ class Analysis :
                     '--compress-fastq',
                     '--device "cuda:0"',
                     '--flowcell FLO-MIN106 --kit SQK-RBK004',
-                    '1>' + stdout_file,
-                    '2>' + stderr_file])
+                    '1>' + guppy_stdout, '2>' + guppy_stderr])
         self.print_and_run(command)
 
         # Merge the smaller FASTQ files
@@ -1163,7 +1299,7 @@ class Analysis :
             qcat_input_fastq = self.ont_fastq
             
         self.print_and_log('Running qcat on raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
-        stdout_file, stderr_file = [os.path.join(self.demultiplexed_dir, 'qcat.' + i) for i in ['stdout', 'stderr']]
+        qcat_stdout, qcat_stderr = self.std_files(os.path.join(self.demultiplexed_dir, 'qcat'))
         command = ' '.join(['qcat',
                             '--trim',
                             '--guppy',
@@ -1172,14 +1308,13 @@ class Analysis :
                             '-t', str(self.threads),
                             '-f', qcat_input_fastq,
                             '-b', self.demultiplexed_dir,
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
+                            '1>' + qcat_stdout, '2>' + qcat_stderr])
         self.print_and_run(command)
 
         # Figure out if we need to run multiple analyses, i.e, we have multiple barcodes
         barcode_summary_tsv = os.path.join(self.demultiplexed_dir, 'barcode_summary.tsv')
         command = ' '.join(['cat',
-                           stderr_file,
+                           qcat_stderr,
                            '| grep -E \'barcode[0-9]+\'',
                             '|awk \'{OFS="\\t"; print $1,$2,$(NF - 1)}\'',
                            '>' + barcode_summary_tsv])
@@ -1198,7 +1333,7 @@ class Analysis :
         if len(self.barcodes) == 1 or not self.multiplexed :
             self.ont_fastq = os.path.join(self.demultiplexed_dir, self.barcode_summary.iloc[0,0] + '.fastq')
         else :
-            self.analysis = ['start_barcode_analysis']
+            self.analysis = ['start_barcode_analysis', 'clean_up']
 
             
     def start_barcode_analysis(self) :
@@ -1210,6 +1345,8 @@ class Analysis :
             barcode_analysis.multiplexed = False
             barcode_analysis.output_dir = os.path.join(self.output_dir, barcode)
             barcode_analysis.ont_fastq = os.path.join(self.demultiplexed_dir, barcode + '.fastq')
+            barcode_analysis.is_barcode = True
+            barcode_analysis.files_to_clean = []
             barcode_analysis.validate_options()
             barcode_analysis.feature_fastas = self.feature_fastas
             barcode_analysis.go()
@@ -1226,15 +1363,14 @@ class Analysis :
         # Use lordec-correct to ONT reads
         self.print_and_log('Running LoRMA on the ONT reads', self.sub_process_verbosity, self.sub_process_color)
         lorma_fasta, lorma_fastq = [os.path.join(self.ont_fastq_dir, 'lorma.' + i) for i in ['fasta', 'fastq']]
-        lorma_stdout, lorma_stderr = [os.path.join(self.ont_fastq_dir, 'lorma.' + i) for i in ['stdout', 'stderr']]
+        lorma_stdout, lorma_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'lorma'))
         command = ' '.join(['lordec-correct',
                             '-c -s 4 -k 19 -g',
                             '-T', str(self.threads),
                             '-i', self.ont_fastq,
                             '-2', self.ont_fastq,
                             '-o', lorma_fasta,
-                            '1>', lorma_stdout,
-                            '2>', lorma_stderr])
+                            '1>', lorma_stdout, '2>', lorma_stderr])
         self.print_and_run(command)
 
         # Check for LoRMA output
@@ -1346,18 +1482,17 @@ class Analysis :
         self.ont_assembly_dir = os.path.join(self.output_dir, 'ont_assembly')
         os.makedirs(self.ont_assembly_dir)
 
-        # Assemble with Flye.  One step.
+        # Assemble with Flye
         self.print_and_log('Running flye', self.sub_process_verbosity, self.sub_process_color)
         flye_output_dir = self.ont_assembly_dir
-        flye_stdout, flye_stderr = [os.path.join(self.ont_assembly_dir, 'flye.' + i) for i in ['stdout', 'stderr']]
-        flye_fasta = flye_output_dir + '/assembly.fasta'
+        flye_stdout, flye_stderr = self.std_files(os.path.join(self.ont_assembly_dir, 'flye'))
+        flye_fasta = os.path.join(flye_output_dir, 'assembly.fasta')
         
         raw_or_corrected = '--nano-raw'
         if self.error_correct :
             raw_or_corrected = '--nano-corr'
             
         command = ' '.join(['flye',
-        #command = ' '.join(['/storage/hive/project/bio-jordan/aconley3/conda/envs/pima/src/Flye/bin/flye',
                             '--plasmid',
                             '--asm-coverage 150',
                             raw_or_corrected, self.ont_fastq,
@@ -1365,8 +1500,7 @@ class Analysis :
                             '-g', self.genome_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
-                            '1>', flye_stdout,
-                            '2>', flye_stderr])
+                            '1>', flye_stdout, '2>', flye_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(flye_fasta, 'Flye fasta', 'cannot be found after flye', 'is empty')
 
@@ -1441,18 +1575,20 @@ class Analysis :
         # Actually run Medaka
         self.print_and_log('Starting medaka', self.sub_process_verbosity, self.sub_process_color)
         self.medaka_fasta = os.path.join(self.medaka_dir, 'consensus.fasta')
-        medaka_stdout, medaka_stderr = [os.path.join(self.medaka_dir, 'medaka.') + i for i in ['stdout', 'stderr']]
+        medaka_stdout, medaka_stderr = self.std_files(os.path.join(self.medaka_dir, 'medaka'))
         command = ' '.join(['medaka_consensus',
                             '-m', 'r941_min_high_g351',
                             '-i', self.ont_raw_fastq,
                             '-d', self.genome_fasta,
                             '-o', self.medaka_dir,
                             '-t', str(self.threads),
-                            '1>' + medaka_stdout,
-                            '2>' + medaka_stderr])
+                            '1>' + medaka_stdout, '2>' + medaka_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.medaka_fasta, 'Medaka FASTA', 'cannot be found after Medaka', 'is empty')
 
+        medaka_bam = os.path.join(self.medaka_dir, 'calls_to_draft.bam')
+        self.files_to_clean += [medaka_bam]
+        
         self.print_and_log('Repairing contig names after Medaka', self.sub_process_verbosity, self.sub_process_color)
         self.genome_fasta = os.path.join(self.medaka_dir, 'assembly.fasta')
         command = ' '.join(['cat', self.medaka_fasta,
@@ -1597,7 +1733,7 @@ class Analysis :
         self.spades_dir = os.path.join(self.output_dir, 'spades')
         os.makedirs(self.spades_dir)
 
-        spades_stdout, spades_stderr = [os.path.join(self.spades_dir, 'spades.' + i) for i in ['stdout', 'stderr']]
+        spades_stdout, spades_stderr = self.std_files(os.path.join(self.spades_dir, 'spades'))
         command = ' '.join(['spades.py',
                             '-1', self.illumina_fastq[0],
                             '-2', self.illumina_fastq[1],
@@ -1605,8 +1741,7 @@ class Analysis :
                             '-t', str(self.threads),
                             '--trusted-contigs', self.genome_fasta,
                             '--careful -k 71,81,91,101',
-                            '1>' + spades_stdout,
-                            '2>' + spades_stderr])
+                            '1>' + spades_stdout, '2>' + spades_stderr])
         self.print_and_run(command)
         self.genome_fasta = os.path.join(self.spades_dir, 'scaffolds.fasta')
 
@@ -1627,15 +1762,14 @@ class Analysis :
         self.spades_dir = os.path.join(self.output_dir, 'spades')
         os.makedirs(self.spades_dir)
 
-        spades_stdout, spades_stderr = [os.path.join(self.spades_dir, 'spades.' + i) for i in ['stdout', 'stderr']]
+        spades_stdout, spades_stderr = self.std_files(os.path.join(self.spades_dir, 'spades'))
         command = ' '.join(['spades.py',
                             '-1', self.illumina_fastq[0],
                             '-2', self.illumina_fastq[1],
                             '-o', self.spades_dir,
                             '-t', str(self.threads),
                             '--careful -k 71,81,91,101',
-                            '1>' + spades_stdout,
-                            '2>' + spades_stderr])
+                            '1>' + spades_stdout, '2>' + spades_stderr])
         self.print_and_run(command)
         self.genome_fasta = os.path.join(self.spades_dir, 'scaffolds.fasta')
 
@@ -1665,15 +1799,14 @@ class Analysis :
 
         # Actually run pilon
         self.print_and_log('Running Pilon', self.sub_process_verbosity, self.sub_process_color)
-        pilon_stdout, pilon_stderr = [os.path.join(self.pilon_dir, 'pilon.' + i) for i in ['stdout', 'stderr']]
+        pilon_stdout, pilon_stderr = self.std_files(os.path.join(self.pilon_dir, 'pilon'))
         pilon_prefix = os.path.join(self.pilon_dir, 'assembly')
         self.pilon_fasta = pilon_prefix + '.fasta'
         command = ' '.join(['pilon',
                             '--genome', self.genome_fasta,
                             '--frags', pilon_bam,
                             '--output', pilon_prefix,
-                            '1>', pilon_stdout,
-                            '2>', pilon_stderr])
+                            '1>', pilon_stdout, '2>', pilon_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.pilon_fasta, 'Pilon FASTA', 'cannot be found after pilon', 'is empty')
         
@@ -1713,10 +1846,9 @@ class Analysis :
 
         self.print_and_log('Making a BLAST database for ' + database_fasta, self.sub_process_verbosity, self.sub_process_color)
         std_prefix = re.sub('\.[^.]*$', '', database_fasta)
-        stdout_file, stderr_file = [std_prefix + '.std' + i for i in ['out', 'err']]
+        stdout_file, stderr_file = self.std_files(std_prefix)
         command = ' '.join(['makeblastdb -in', database_fasta, '-dbtype nucl -parse_seqids',
-                            '1>' + stdout_file,
-                            '2>' + stderr_file])
+                            '1>' + stdout_file, '2>' + stderr_file])
         self.print_and_run(command)
 
         
@@ -1758,13 +1890,13 @@ class Analysis :
         # BLASTn the feature set
         blast_output = os.path.join(feature_dir, 'blast_output.tsv')
         self.print_and_log('BLASTing features against the assembly', self.sub_process_verbosity, self.sub_process_color)
-        stderr_file = os.path.join(feature_dir, 'blastn.stderr')
+        blastn_stdout, blastn_stderr = self.std_files(os.path.join(feature_dir, 'blastn'))
         command = ' '.join(['blastn -db', self.genome_fasta,
                             '-query', feature_fasta,
                             '-perc_identity 95.0',
                             '-outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore nident qlen"',
                             '-evalue 1e-10 -out ', blast_output,
-                            '2>' + stderr_file])
+                            '1>' + blastn_stdout, '2>' + blastn_stderr])
         self.print_and_run(command)
 
         # Clean up the results into a handy BED file
@@ -1779,10 +1911,10 @@ class Analysis :
         # Make clusters of AMR hits
         self.print_and_log('Clustering feature hits', self.sub_process_verbosity, self.sub_process_color)
         merge_bed = os.path.join(feature_dir, 'merge.bed')
-        stderr_file = os.path.join(feature_dir, 'bedtools_merge.stderr')
+        merge_stdout, merge_stderr = self.std_files(os.path.join(feature_dir, 'bedtools_merge'))
         command = ' '.join(['bedtools merge -d -30 -i', all_bed,
                             '1>' + merge_bed,
-                            '2>' + stderr_file])
+                            '2>' + merge_stderr])
         self.print_and_run(command)
                             
         # Pick the best hit for each cluster
@@ -1850,9 +1982,9 @@ class Analysis :
         genome_sizes = os.path.join(self.insertions_dir, 'genome.sizes')
         genome_insertions_bed = os.path.join(self.insertions_dir, 'genome_insertions.bed')
 
-        command = ' '.join(['faidx -i chromsizes', self.reference_fasta, '>', self.reference_sizes])
+        command = ' '.join(['faidx -i chromsizes', self.reference_fasta, ' | sort -k 1,1 -k 2,2n >', self.reference_sizes])
         self.print_and_run(command)
-        command = ' '.join(['faidx -i chromsizes', self.genome_fasta, '>', genome_sizes])
+        command = ' '.join(['faidx -i chromsizes', self.genome_fasta, ' | sort -k1,1 -k2,2n >', genome_sizes])
         self.print_and_run(command)
 
         command = ' '.join(['bedtools complement',
@@ -2001,7 +2133,6 @@ class Analysis :
         self.amr_mutations = None
         self.report[self.mutation_title] = pandas.Series()
         
-        
         # Make the directory for new assembly files
         self.mutations_dir = os.path.join(self.output_dir, 'mutations')
         os.makedirs(self.mutations_dir)
@@ -2126,16 +2257,19 @@ class Analysis :
         # Query plasmid sequences against the assembly using minimap2
         self.print_and_log('Running minimap2 against the plasmid database', self.sub_process_verbosity, self.sub_process_color)
         plasmid_sam = os.path.join(self.plasmid_dir, 'plasmid_hits.sam')
-        stderr_file = os.path.join(self.plasmid_dir, 'minimap.stderr')
+        minimap_stdout, minimap_stderr = self.std_files(os.path.join(self.plasmid_dir, 'minimap'))
         command = ' '.join(['minimap2',
                             '-k 20 -p .2 -a',
                             '-t', str(self.threads),
                             self.genome_fasta,
                             self.plasmid_database,
-                            '1>', plasmid_sam, '2>', stderr_file])
+                            '1>', plasmid_sam,
+                            '2>', minimap_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig SAM', 'cannot be found', 'is empty')
 
+        self.files_to_clean += [plasmid_sam]
+        
         method = 'The plasmid reference database was queried against the genome assembly using minimap2 (v ' + self.versions['minimap2'] + ').'
         self.report[self.methods_title][self.plasmid_methods] = \
             self.report[self.methods_title][self.plasmid_methods].append(pandas.Series(method))
@@ -2143,11 +2277,11 @@ class Analysis :
         # Turn the SAM file in to a PSL file using the modified sam2psl script
         self.print_and_log('Converting the SAM file to a PSL file', self.sub_process_verbosity, self.sub_process_color)
         plasmid_psl = os.path.join(self.plasmid_dir, 'plasmid_hits.psl')
-        stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'sam2psl.' + i) for i in ['stdout', 'stderr']]
+        sam2psl_stdout, sam2psl_stderr = self.std_files(os.path.join(self.plasmid_dir, 'sam2psl'))
         command = ' '.join(['sam2psl.py',
                             '-i', plasmid_sam,
                             '-o', plasmid_psl,
-                            '1>', stdout_file, '2>', stderr_file])
+                            '1>', sam2psl_stdout, '2>', sam2psl_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig PSL', 'cannot be found', 'is empty')
 
@@ -2294,10 +2428,10 @@ class Analysis :
 
         self.validate_file_and_size_or_error(self.report_tex, 'Report TEX', 'cannot be found', 'is empty')
 
-        stdout_file, stderr_file = [os.path.join(self.report_dir, 'tectonic.' + i) for i in ['stdout', 'stderr']]        
+        tectonic_stdout, tectonic_stderr = self.std_files(os.path.join(self.report_dir, 'tectonic'))
         command = ' '.join(['tectonic',
                            self.report_tex,
-                           '1>' + stdout_file, '2>' + stderr_file])
+                           '1>' + tectonic_stdout, '2>' + tectonic_stderr])
         self.print_and_run(command)
 
         self.validate_file_and_size_or_error(self.report_pdf, 'Report TEX', 'cannot be found', 'is empty')
@@ -2325,7 +2459,6 @@ class Analysis :
             step = self.analysis[0]
             self.analysis = self.analysis[1:]
             
-            print(step)
             ## See if we have arguments to pass to our function
             if type(step) is list :
                 arguments = []
@@ -2366,6 +2499,14 @@ if __name__ == '__main__':
     
     # Input arguments
     input_group = parser.add_argument_group('Input and basecalilng options')
+    input_group.add_argument('--ont-watch', required = False, default = None, metavar = '<ONT_DIR>',
+                        help = 'Directory from an ONT run.')
+    input_group.add_argument('--ont-watch-min-reads', required = False, type = int, default = 5000000, metavar = '<INT>',
+                        help = 'Minimum number of ONT reads to watch for.' )
+    input_group.add_argument('--ont-watch-max-time', required = False, type = float, default = 24, metavar = '<HOURS>',
+                        help = 'Maxmium time to watch for new reads.' )
+    input_group.add_argument('--ont-watch-between-time', required = False, type = float, default = 15, metavar = '<MINUTES>',
+                        help = 'Maximum to to wait between new FAST5 files')
     input_group.add_argument('--ont-fast5', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory containing ONT FAST5 files')
     input_group.add_argument('--ont-fast5-limit', required = False, type = int, default = None, metavar = '<DIR_COUNT>',
@@ -2516,3 +2657,4 @@ if __name__ == '__main__':
 
     #If we're still good, start the actual analysis
     analysis.go()
+
