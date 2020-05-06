@@ -755,11 +755,12 @@ class Analysis :
                 self.versions['pilon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
 
             self.analysis += ['pilon_assembly']
+
         else :
             if self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)') :
                 command = 'spades.py --version'
                 self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
-            
+                
             self.analysis += ['spades_illumina_fastq']
             self.will_have_genome_fasta = True
             
@@ -1192,6 +1193,8 @@ class Analysis :
                     '-i', self.ont_fast5,
                     '-r',
                     '-s', self.ont_fastq_dir,
+                    '--num_callers 14',
+                    '--gpu_runners_per_device 8',
                     '--compress-fastq',
                     '--device "cuda:0"',
                     '--flowcell FLO-MIN106 --kit SQK-RBK004',
@@ -1300,6 +1303,7 @@ class Analysis :
         command = ' '.join(['qcat',
                             '--trim',
                             '--guppy',
+                            '--min-score 65',
                             '--kit RBK004',
                             '-t', str(self.threads),
                             '-f', qcat_input_fastq,
@@ -1573,7 +1577,7 @@ class Analysis :
         self.medaka_fasta = os.path.join(self.medaka_dir, 'consensus.fasta')
         medaka_stdout, medaka_stderr = self.std_files(os.path.join(self.medaka_dir, 'medaka'))
         command = ' '.join(['medaka_consensus',
-                            '-m', 'r941_min_high',
+                            '-m', 'r941_min_high_g351',
                             '-i', self.ont_raw_fastq,
                             '-d', self.genome_fasta,
                             '-o', self.medaka_dir,
@@ -1788,7 +1792,7 @@ class Analysis :
         pilon_bam = os.path.join(self.pilon_dir, 'mapping.bam')
         self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
         self.files_to_clean += [pilon_bam]
-        method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + self.versions['minimap2'] + ').'
+        method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + str(self.versions['minimap2']) + ').'
         self.report[self.methods_title][self.assembly_methods] = \
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
         
@@ -1810,7 +1814,7 @@ class Analysis :
 
         self.load_genome()
 
-        method = 'The Illumina mappings were then used to error-correct the assembmly with Pilon (v ' + self.versions['pilon'] + ').'
+        method = 'The Illumina mappings were then used to error-correct the assembmly with Pilon (v ' + str(self.versions['pilon']) + ').'
         self.report[self.methods_title][self.assembly_methods] = \
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
 
