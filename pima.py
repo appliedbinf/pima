@@ -726,13 +726,17 @@ class Analysis :
         if self.ont_fast5 or self.ont_fastq or self.genome_fasta :
             self.validate_utility('pilon', 'pilon is not on the PATH (required by --illumina-fastq with --ont-fastq, --ont-fast, or --genome)')
 
+            command = 'minimap2 --version'
+            self.versions['minimap2'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+ 
             command = 'pilon --version'
             self.versions['pilon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
 
             self.analysis += ['pilon_assembly']
+
         else :
             self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)')
-            
+           
             command = 'spades.py --version'
             self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
             
@@ -1654,7 +1658,7 @@ class Analysis :
         pilon_bam = os.path.join(self.pilon_dir, 'mapping.bam')
         self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
         self.files_to_clean += [pilon_bam]
-        method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + self.versions['minimap2'] + ').'
+        method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + str(self.versions['minimap2']) + ').'
         self.report[self.methods_title][self.assembly_methods] = \
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
         
@@ -1677,7 +1681,7 @@ class Analysis :
 
         self.load_genome()
 
-        method = 'The Illumina mappings were then used to error-correct the assembmly with Pilon (v ' + self.versions['pilon'] + ').'
+        method = 'The Illumina mappings were then used to error-correct the assembmly with Pilon (v ' + str(self.versions['pilon']) + ').'
         self.report[self.methods_title][self.assembly_methods] = \
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
 
