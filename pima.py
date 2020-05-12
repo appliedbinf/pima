@@ -8,7 +8,9 @@ import locale
 import logging
 import os
 import re
+import pyfastx
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -29,9 +31,7 @@ from pima_report import PimaReport
 
 pandas.set_option('display.max_colwidth', 200)
 
-
 VERSION=1.0
-
 
 pima_path = os.path.dirname(os.path.realpath(__file__))
 data_dir = os.path.join(pima_path, 'data')
@@ -130,13 +130,16 @@ class Analysis :
 
         # Assembly options
         self.assembler = opts.assembler
-        self.genome_size = opts.genome_size
+        self.genome_assembly_size = opts.genome_size
         self.racon = opts.racon
         self.racon_rounds = opts.racon_rounds
         self.no_medaka = opts.no_medaka
+        self.ont_n50_min = 2500
+        self.ont_coverage_min = 30
         self.nanopolish = opts.nanopolish
         self.nanopolish_coverage_max = opts.max_nanopolish_coverage
         self.pilon = opts.pilon
+        self.pilon_coverage_min = 25
         self.will_have_ont_assembly = False
         self.contig_info = None
 
@@ -170,6 +173,7 @@ class Analysis :
         self.threads = opts.threads
 
         self.errors = []
+        self.warnings = []
         
         # How much stuff to print
         self.verbosity = opts.verbosity
@@ -262,7 +266,16 @@ class Analysis :
         self.print_and_log(command, self.command_verbosity)
         return(self.run_command(command))
 
-        
+
+    def print_warning(self, warning) :
+        self.print_and_log(warning, self.warning_verbosity, self.warning_color)
+    
+    
+    def add_warning(self, warning) :
+        self.print_warning(warning)
+        self.warnings += [warning]
+    
+    
     def validate_file(self, the_file) :
         return os.path.isfile(the_file)
 
@@ -315,8 +328,11 @@ class Analysis :
     def load_genome(self) :
 
         self.genome = self.load_fasta(self.genome_fasta)
+        self.genome_size = 0
+        for i in self.genome :
+            self.genome_size += len(i.seq)
 
-
+            
     def load_reference(self) :
 
         self.reference = self.load_fasta(self.reference_fasta)
@@ -337,6 +353,67 @@ class Analysis :
             self.print_and_run(command)
                            
             
+    def bwa_index_fasta(self, fasta) :
+        
+        self.print_and_log('Indexing FASTA with bwa index', self.sub_process_verbosity, self.sub_process_color)
+         
+        # TODO - check for the presence of an index
+        
+        # Make the bwa index
+        std_prefix = re.sub('\.f(na|asta)$', '', fasta)
+        bwa_index_stdout, bwa_index_stderr = self.std_files(std_prefix + '_index')
+        command = ' '.join(['bwa',
+                            'index',
+                            fasta,
+                            '1>' + bwa_index_stdout, '2>' + bwa_index_stderr])
+        self.print_and_run(command)
+
+        # TODO - check that the index was built
+                            
+            
+    def bwa_short_illumina_fastq(self, genome, fastq, bam) :
+
+        std_prefix = re.sub('\.bam$', '', bam)
+            
+        self.bwa_index_fasta(genome)
+
+        # Align the reads 
+        sai = []
+        for i in range(len(self.illumina_fastq)) :
+            bwa_stdout, bwa_stderr = self.std_files(std_prefix + '_aln')
+            this_sai = std_prefix + '_aln_' + str(i) + '.sai'
+            command = ' '.join(['bwa aln',
+                                '-t', str(self.threads),
+                                genome,
+                                self.illumina_fastq[i],
+                                '1>', this_sai,
+                                '2>', bwa_stderr])
+            sai += [this_sai]
+            self.print_and_run(command)
+            self.validate_file_and_size_or_error(this_sai)
+                          
+        # And turn the SAI into a proper SAM file
+        read_type = 'samse'
+        if len(self.illumina_fastq) > 1 :
+            read_type = 'sampe'
+        bwa_stdout, bwa_stderr = self.std_files(std_prefix + '_sam')
+        tmp_file = std_prefix + '.tmp'
+        command = ' '.join(['bwa',
+                            read_type,
+                            genome,
+                            ' '.join(sai),
+                            ' '.join(self.illumina_fastq),
+                            '2>', bwa_stderr,
+                            '| samtools',
+                            'sort',
+                            '-T', tmp_file,
+                            '-o', bam,
+                            '-'])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(bam)
+        self.index_bam(bam)
+
+
     def minimap_ont_fastq(self, genome, fastq, bam) :
 
         std_prefix = re.sub('\.bam$', '', bam)
@@ -359,7 +436,7 @@ class Analysis :
     def minimap_illumina_fastq(self, genome, fastq, bam) :
 
         std_prefix = re.sub('\.bam$', '', bam)
-        minimap_stdout, minmap_stderr = self.std_files(std_prefix)
+        minimap_stdout, minimap_stderr = self.std_files(std_prefix)
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
                             '-x sr',
@@ -616,7 +693,7 @@ class Analysis :
         self.print_and_log('Validating miniasm utilities', self.main_process_verbosity, self.main_process_color)
         
         for utility in ['minimap2', 'miniasm'] :
-                self.validate_utility(utility, utility + ' is not on the PATH (required by --assembler miniasm)')
+            self.validate_utility(utility, utility + ' is not on the PATH (required by --assembler miniasm)')
 
         self.will_have_ont_assembly = True
         self.will_have_genome_fasta = True
@@ -637,10 +714,10 @@ class Analysis :
         
         self.print_and_log('Validating wtdbg2 utilities', self.main_process_verbosity, self.main_process_color)
         
-        if not self.genome_size :
+        if not self.genome_assembly_size :
             self.errors += ['wtdbg2 requires --genome-size']
-        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_size) :
-            self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_size)]
+        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_assembly_size) :
+            self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_assembly_size)]
         
         for utility in ['pgzf', 'kbm2', 'wtdbg2', 'wtpoa-cns', 'wtdbg-cns'] :
                 self.validate_utility(utility, utility + ' is not on the PATH (required by --assembler wtdbg2)')
@@ -663,10 +740,10 @@ class Analysis :
         
         self.print_and_log('Validating flye utilities', self.main_process_verbosity, self.main_process_color)
         
-        if not self.genome_size :
+        if not self.genome_assembly_size :
             self.errors += ['Flye requires --genome-size']
-        elif not re.match('^[0-9]+(\\.[0-9]+)?[mkMK]$', self.genome_size) :
-            self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_size)]
+        elif not re.match('^[0-9]+(\\.[0-9]+)?[mkMK]$', self.genome_assembly_size) :
+            self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_assembly_size)]
             
         if self.validate_utility('flye', 'flye is not on the PATH (required by --assembler flye).') :
             command = 'flye --version'
@@ -744,15 +821,38 @@ class Analysis :
 
         self.print_and_log('Validating Illumina data', self.main_process_verbosity, self.main_process_color)
         
+        if not type(self.illumina_fastq) is list :
+            self.illumina_fastq = [self.illumina_fastq]
+
+        if len(self.illumina_fastq) :
+            self.illumina_paired_end = False
+        
         for r_fastq in self.illumina_fastq :
             if not self.validate_file_and_size(r_fastq) :
                 self.errors += ['Illumian FASTQ file' + r_fastq + ' cannot be found or is size 0']
-        
+            else : # Figure out how long the reads are
+                read_lengths = []
+
+                import gzip
+                opener = open
+                open_type = 'r'
+                if re.search('.gz(ip)?$', r_fastq) :
+                    opener = gzip.open
+                    open_type = 'rt'
+                
+                r_handle = opener(self.illumina_fastq[0], open_type)
+                parser = Bio.SeqIO.parse(r_handle, 'fastq')
+
+                for i in range(1, 10000) :
+                    read_lengths += [len(next(parser))]
+                self.illumina_read_length_mean = statistics.mean(read_lengths)
+                
         # Assume we want to use Illumina data to polish a given genome or ONT assembly
         if self.ont_fast5 or self.ont_fastq or self.genome_fasta :
-            if self.validate_utility('pilon', 'pilon is not on the PATH (required by --illumina-fastq).') :
-                command = 'pilon --version'
-                self.versions['pilon'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+            for utility in ['minimap2', 'pilon'] :
+                if self.validate_utility(utility, utility + ' is not on the PATH (required by --illumina-fastq).') :
+                    command = utility + ' --version'
+                    self.versions[utility] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
 
             self.analysis += ['pilon_assembly']
 
@@ -1454,7 +1554,7 @@ class Analysis :
                             '-t', str(self.threads),
                             '-i', self.ont_fastq,
                             '-fo', wtdbg2_prefix,
-                            '-g', self.genome_size,
+                            '-g', self.genome_assembly_size,
                             '-xont',
                             '1>', wtdbg2_stdout,
                             '2>', wtdbg2_stderr])
@@ -1491,13 +1591,24 @@ class Analysis :
         raw_or_corrected = '--nano-raw'
         if self.error_correct :
             raw_or_corrected = '--nano-corr'
-            
+
+        # Figure out the N50 and coverage in case it's too low
+        command = ' '.join(['cat',
+                            self.ont_fastq,
+                            '| awk \'{getline;print length($0);s += length($1);getline;getline;getline}END{print "+"s}\'',
+                            '| sort -gr',
+                            '| awk \'BEGIN{bp = 0}{if(NR == 1){sub("+", "", $1);s=$1}else{bp += $1;if(bp > s / 2){print $1"\t"s;exit}}}\''])
+        self.ont_n50, self.ont_bases = [int(i) for i in re.split('\\t', self.print_and_run(command)[0])]
+
+        if self.ont_n50 <= self.ont_n50_min :
+            self.add_warning('ONT N50 (' + str(self.ont_n50) + ') is less than the recommended minimum (' + str(self.ont_n50_min) + ').')
+
         command = ' '.join(['flye',
                             '--plasmid',
                             '--asm-coverage 150',
                             raw_or_corrected, self.ont_fastq,
                             '--meta',
-                            '-g', self.genome_size,
+                            '-g', self.genome_assembly_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
                             '1>', flye_stdout, '2>', flye_stderr])
@@ -1577,7 +1688,7 @@ class Analysis :
         self.medaka_fasta = os.path.join(self.medaka_dir, 'consensus.fasta')
         medaka_stdout, medaka_stderr = self.std_files(os.path.join(self.medaka_dir, 'medaka'))
         command = ' '.join(['medaka_consensus',
-                            '-m', 'r941_min_high_g351',
+                            '-m', 'r941_min_high_g360',
                             '-i', self.ont_raw_fastq,
                             '-d', self.genome_fasta,
                             '-o', self.medaka_dir,
@@ -1733,14 +1844,19 @@ class Analysis :
         self.spades_dir = os.path.join(self.output_dir, 'spades')
         os.makedirs(self.spades_dir)
 
+        # Figure out if we have single-end or paired-end reads
+        fastq_input = '-s ' + self.illumina_fastq[0]
+        if len(self.illumina_fastq) == 2:
+            fastq_input = ' '.join(['-1', self.illumina_fastq[0],
+                                    '-2', self.illumina_fastq[1]])
+        
         spades_stdout, spades_stderr = self.std_files(os.path.join(self.spades_dir, 'spades'))
         command = ' '.join(['spades.py',
-                            '-1', self.illumina_fastq[0],
-                            '-2', self.illumina_fastq[1],
+                            fastq_input,
                             '-o', self.spades_dir,
                             '-t', str(self.threads),
                             '--trusted-contigs', self.genome_fasta,
-                            '--careful -k 71,81,91,101',
+                            '--careful -k auto',
                             '1>' + spades_stdout, '2>' + spades_stderr])
         self.print_and_run(command)
         self.genome_fasta = os.path.join(self.spades_dir, 'scaffolds.fasta')
@@ -1762,16 +1878,24 @@ class Analysis :
         self.spades_dir = os.path.join(self.output_dir, 'spades')
         os.makedirs(self.spades_dir)
 
+        # Figure out if we have single-end or paired-end reads
+        fastq_input = '-s ' + self.illumina_fastq[0]
+        if len(self.illumina_fastq) == 2:
+            fastq_input = ' '.join(['-1', self.illumina_fastq[0],
+                                    '-2', self.illumina_fastq[1]])
+
         spades_stdout, spades_stderr = self.std_files(os.path.join(self.spades_dir, 'spades'))
         command = ' '.join(['spades.py',
-                            '-1', self.illumina_fastq[0],
-                            '-2', self.illumina_fastq[1],
+                            fastq_input,
                             '-o', self.spades_dir,
                             '-t', str(self.threads),
-                            '--careful -k 71,81,91,101',
+                            '--careful -k auto',
                             '1>' + spades_stdout, '2>' + spades_stderr])
         self.print_and_run(command)
+
         self.genome_fasta = os.path.join(self.spades_dir, 'scaffolds.fasta')
+        if not self.illumina_paired_end :
+            self.genome_fasta = os.path.join(self.spades_dir, 'contigs.fasta')
 
         assembly_fasta = os.path.join(self.spades_dir, 'assembly.fasta')
         command = ' '.join(['cp', self.genome_fasta, assembly_fasta])
@@ -1790,21 +1914,41 @@ class Analysis :
         # Map illumina reads onto the assembly
         self.print_and_log('Mapping Illumina reads to assembly', self.sub_process_verbosity, self.sub_process_color)
         pilon_bam = os.path.join(self.pilon_dir, 'mapping.bam')
-        self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
         self.files_to_clean += [pilon_bam]
-        method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + str(self.versions['minimap2']) + ').'
-        self.report[self.methods_title][self.assembly_methods] = \
-            self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
-        
+
+        # See what mapping method to use - bwa aln or minimap 2
+        if self.illumina_read_length_mean <= 65 :
+            self.bwa_short_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
+            method = 'Illumina reads were mapped to the genome assembly using bwa aln'
+        else : # We have longer short reads
+            self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
+            method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + str(self.versions['minimap2']) + ').'
+        self.report[self.methods_title][self.assembly_methods] = self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
+
+        # Figure out the depth here.  If it's too low, give some sort of warning?
+        coverage_tsv = os.path.join(self.pilon_dir, 'coverage.tsv')
+        command = ' '.join(['samtools depth -a', pilon_bam,
+                            '| awk \'{s += $3; c++}END{printf "%s\\t%i\\t%.0f\\n", i, c, (s / c)}\'',
+                            '>', coverage_tsv])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
+        self.pilon_coverage = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').iloc[0,2]
+
+        # If mean coverage is low then give some warning
+        if self.pilon_coverage < self.pilon_coverage_min :
+            self.add_warning('Illumina coverage for Pilon is below ' + str(self.pilon_coverage_min))
 
         # Actually run pilon
         self.print_and_log('Running Pilon', self.sub_process_verbosity, self.sub_process_color)
         pilon_stdout, pilon_stderr = self.std_files(os.path.join(self.pilon_dir, 'pilon'))
         pilon_prefix = os.path.join(self.pilon_dir, 'assembly')
         self.pilon_fasta = pilon_prefix + '.fasta'
+        bam_option = '--frags'
+        if len(self.illumina_fastq) == 1 :
+            bam_option = '--unpaired'
         command = ' '.join(['pilon',
                             '--genome', self.genome_fasta,
-                            '--frags', pilon_bam,
+                            bam_option, pilon_bam,
                             '--output', pilon_prefix,
                             '1>', pilon_stdout, '2>', pilon_stderr])
         self.print_and_run(command)
@@ -1961,6 +2105,28 @@ class Analysis :
         method = 'The genome assembly was aligned against the reference sequencing using dnadiff (v ' + self.versions['dnadiff'] + ').'
         self.report[self.methods_title][self.reference_methods] = \
             self.report[self.methods_title][self.reference_methods].append(pandas.Series(method))
+
+        # Figure out the %-identity with the reference sequence
+        dnadiff_report = self.dnadiff_prefix + '.report'
+        command = ' '.join(['grep AvgIdentity', dnadiff_report,
+                            '| head -1',
+                            '| awk \'{print $2}\''])
+        self.reference_identity = float(self.print_and_run(command)[0])
+
+        command = ' '.join(['grep AlignedBases', dnadiff_report,
+                            '| head -1',
+                            '| awk \'{sub("\\\\(.*", "", $3);print $3}\''])
+        self.reference_aligned_bases = int(self.print_and_run(command)[0])
+
+        # Figure out the aligned fraction
+        self.reference_aligned_fraction = self.reference_aligned_bases / self.genome_size
+
+        # Give a warning if the distance is to high
+        if self.reference_identity <= 100 :
+            self.add_warning('Genome-to-Reference identity {} is less than 98%'.format(str(self.reference_identity)))
+        
+        if self.reference_aligned_fraction <= 1 :
+            self.add_warning('Genome-to-Reference alignment {} is less than 97%'.format(str(self.reference_aligned_fraction)))
         
         # Pull out the aligned regions of the two genomes
         self.print_and_log('Finding reference and query specific insertions', self.sub_process_verbosity, self.sub_process_color)
@@ -2524,7 +2690,7 @@ if __name__ == '__main__':
     input_group.add_argument('--only-basecall', required = False, default = False, action = 'store_true',
                         help = 'Just basecall and demultiplex/trim/correct.  No downstream analysis.')
     
-    input_group.add_argument('--illumina-fastq', required = False, default = None, nargs = 2, metavar = '<FASTQ|GZ>',
+    input_group.add_argument('--illumina-fastq', required = False, default = None, nargs = '+', metavar = '<FASTQ|GZ>',
                         help = 'Files containing R1 & R2 Illumina reads')
 
     input_group.add_argument('--genome', required = False, default = None, metavar = '<GENOME_FASTA>',
