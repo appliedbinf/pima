@@ -1998,8 +1998,11 @@ class Analysis :
         if self.illumina_fastq :
             
             coverage_bam = os.path.join(self.info_dir, 'illumina_coverage.bam')
-            self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, coverage_bam)
             self.files_to_clean += [coverage_bam]
+            if self.illumina_read_length_mean <= 65 :
+                self.bwa_short_illumina_fastq(self.genome_fasta, self.illumina_fastq, coverage_bam)
+            else :
+                self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, coverage_bam)
             
             coverage_tsv = os.path.join(self.info_dir, 'illumina_coverage.tsv')
             command = ' '.join(['samtools depth -a', coverage_bam,
@@ -2009,7 +2012,6 @@ class Analysis :
             self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
 
             self.contig_info['illumina'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t')
-
             
         self.make_finish_file(self.info_dir)
         
