@@ -36,6 +36,7 @@ VERSION=1.0
 pima_path = os.path.dirname(os.path.realpath(__file__))
 data_dir = os.path.join(pima_path, 'data')
 amr_database_default = f"{pima_path}/data/amr.fasta"
+amr_gene_drug_tsv = f"{pima_path}/data/gene_drug.tsv"
 amr_default_color = '#FED976'
 inc_database_default = f"{pima_path}/data/inc.fasta"
 inc_default_color = '#0570B0'
@@ -98,6 +99,10 @@ class Analysis :
 
         # Date-time information
         self.start_time = datetime.datetime.now().strftime("%Y-%m-%d")
+
+        # Logging information
+        self.logging_file = None
+        self.logging_handle = None
         
         # Input options
         self.ont_watch = opts.ont_watch
@@ -260,6 +265,8 @@ class Analysis :
         if verbosity <= self.verbosity :
             time_string = '[' + str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")) + ']'
             print(time_string + ' ' + color + text + Colors.ENDC)
+        if self.logging_handle :
+            self.logging_handle.write(time_string + ' ' + text)
 
             
     def run_command(self, command) :
@@ -619,7 +626,7 @@ class Analysis :
             self.errors += ['Input genome FASTA ' + self.genome_fasta + ' cannot be found']
         self.will_have_genome_fasta = True
 
-        self.analysis += ['load_genome']
+        self.load_genome()
             
 
     def validate_output_dir(self) :
@@ -653,7 +660,6 @@ class Analysis :
             self.validate_utility(utility, utility + ' is not on the PATH.')
 
         self.will_have_ont_fastq = True
-
 
         if self.ont_fast5 :
             self.analysis += ['guppy_ont_fast5']
@@ -709,7 +715,7 @@ class Analysis :
 
         self.print_and_log('Validating lorma error corrector', self.main_process_verbosity, self.main_process_color)
 
-        self.validate_utility('lordec-correct', 'LoRMA is  not on the PATH (required for ONT error-correction)')
+        self.validate_utility('lordec-correct', 'LoRMA is not on the PATH (required for ONT error-correction)')
 
         self.analysis += ['lorma_ont_fastq']
 
@@ -930,7 +936,10 @@ class Analysis :
         if not self.no_amr :
             self.feature_fastas += [self.amr_database]
             self.feature_colors += [amr_default_color]
-
+            if self.validate_file_and_size(amr_gene_drug_tsv) :
+                self.amr_gene_drug = pandas.read_csv(amr_gene_drug_tsv, index_col = None, sep = '\t', quoting = csv.QUOTE_NONE, header = None)
+                self.drug_categories = self.amr_gene_drug.iloc[:,1].unique()
+            
         if not self.no_inc :
             self.feature_fastas += [self.inc_database]
             self.feature_colors += [inc_default_color]
@@ -971,7 +980,8 @@ class Analysis :
                 command = utility + ' -version'
                 self.versions[utility] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
                 
-        self.analysis = self.analysis + ['blast_feature_sets']
+        self.analysis += ['blast_feature_sets']
+        self.analysis += ['draw_amr_matrix']
 
         
     @unless_only_basecall
@@ -1171,10 +1181,16 @@ class Analysis :
         self.validate_plasmids()
         self.validate_draw_features()
         self.validate_make_report()
+
+    
         
         if len(self.analysis) == 0 :
-            self.errors = self.errors + ['Nothing to do!']
+            if self.is_barcode :
+                return
+            else :
+                self.errors = self.errors + ['Nothing to do!']
 
+            
         self.analysis = self.analysis + ['clean_up']
             
         self.validate_output_dir()
@@ -1201,7 +1217,8 @@ class Analysis :
         
     def start_logging(self):
         self.logging_file = os.path.join(self.output_dir, 'log.txt')
-
+        self.logging_handle = open(self.logging_file, 'w')
+        
 
     def watch_ont(self) :
 
@@ -1368,7 +1385,7 @@ class Analysis :
 
         self.print_and_log('Demultiplexing and trimming reads with qcat', self.main_process_verbosity, self.main_process_color)
         
-        self.demultiplexed_dir = os.path.join(self.output_dir, 'demultiplexgxs')
+        self.demultiplexed_dir = os.path.join(self.output_dir, 'demultiplex')
         os.makedirs(self.demultiplexed_dir)
         self.make_start_file(self.demultiplexed_dir)
 
@@ -1413,7 +1430,7 @@ class Analysis :
         # In the case of a single barcode just go on as normal, otherwise, make an Analysis for each barcode.
         if len(self.barcodes) == 1 or not self.multiplexed :
             self.ont_fastq = os.path.join(self.demultiplexed_dir, self.barcode_summary.iloc[0,0] + '.fastq')
-        else :
+        elif not self.only_basecall :
             self.analysis = ['start_barcode_analysis', 'clean_up']
 
         self.make_finish_file(self.demultiplexed_dir)
@@ -1425,6 +1442,7 @@ class Analysis :
         
         for barcode in self.barcodes :
             barcode_analysis = copy.deepcopy(self)
+            barcode_analysis.analysis = []
             barcode_analysis.multiplexed = False
             barcode_analysis.output_dir = os.path.join(self.output_dir, barcode)
             barcode_analysis.ont_fastq = os.path.join(self.demultiplexed_dir, barcode + '.fastq')
@@ -1432,7 +1450,8 @@ class Analysis :
             barcode_analysis.files_to_clean = []
             barcode_analysis.validate_options()
             barcode_analysis.feature_fastas = self.feature_fastas
-            barcode_analysis.go()
+            if len(barcode_analysis.analysis) > 0 :
+                barcode_analysis.go()
 
 
     def lorma_ont_fastq(self) :
@@ -2627,7 +2646,44 @@ class Analysis :
             self.report[self.feature_plot_title][contig.id] = contig_plot_png
 
         self.make_finish_file(self.drawing_dir)
+
+
+    def draw_amr_matrix(self) :
+
+        self.print_and_log("Drawing AMR matrix", self.main_process_verbosity, self.main_process_color)
+
+        amr_hits = self.feature_hits['amr']
+        
+        # If there are no AMR hits, we can't draw the matrix
+        if amr_hits.shape[0] == 0 :
+            return
+
+        present_genes = amr_hits.iloc[:, 3].unique()
+        present_drugs = self.amr_gene_drug.loc[self.amr_gene_drug.iloc[:,0].isin(present_genes), :].iloc[:, 1].unique()
+
+        amr_matrix = pandas.DataFrame(0, index = present_genes, columns = present_drugs)
+        for amr_gene in present_genes :
+            drugs = self.amr_gene_drug.loc[self.amr_gene_drug.iloc[:,0] == amr_gene, :].iloc[:,1].unique()
+            amr_matrix.loc[amr_gene, drugs] = 1
+
+
             
+        self.amr_matrix_pdf = os.path.join(self.output_dir, 'amr_matrix.pdf')
+        int_matrix = amr_matrix[amr_matrix.columns].astype(int)
+        figure, axis = plt.subplots()
+        heatmap = axis.pcolor(int_matrix, cmap = plt.cm.Blues, linewidth = 0)
+
+        axis.invert_yaxis()
+        axis.set_yticks(np.arange(0.5, len(amr_matrix.index)), minor = False)
+        axis.set_yticklabels(int_matrix.index.values)
+
+        axis.set_xticks(np.arange(0.5, len(amr_matrix.columns)), minor = False)
+        axis.set_xticklabels(amr_matrix.columns.values, rotation = 90)
+        axis.xaxis.tick_top()
+        axis.xaxis.set_label_position('top')
+
+        plt.savefig(self.amr_matrix_pdf)
+        
             
     def make_report(self) :
 
