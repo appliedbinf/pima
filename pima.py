@@ -89,7 +89,21 @@ def pretty(low, high, n):
     miny  = np.floor(low  / d) * d
     maxy  = np.ceil (high / d) * d
     return np.arange(miny, maxy+0.5*d, d)
+
+
+def format_kmg(number, decimals = 0) :
+
+    if number == 0 :
+        return('0')
     
+    magnitude_powers = [10**9, 10**6, 10**3, 1]
+    magnitude_units = ['G', 'M', 'K', '']
+    for i in range(len(magnitude_units)) :
+        if number >= magnitude_powers[i] :
+            magnitude_power = magnitude_powers[i]
+            magnitude_unit = magnitude_units[i]
+            return(('{:0.' + str(decimals) + 'f}').format(number / magnitude_power) + magnitude_unit)
+
     
 class Analysis :
 
@@ -139,8 +153,10 @@ class Analysis :
         self.racon = opts.racon
         self.racon_rounds = opts.racon_rounds
         self.no_medaka = opts.no_medaka
+        self.ont_n50 = None
         self.ont_n50_min = 2500
         self.ont_coverage_min = 30
+        self.illumina_length_mean = None
         self.nanopolish = opts.nanopolish
         self.nanopolish_coverage_max = opts.max_nanopolish_coverage
         self.pilon = opts.pilon
@@ -198,6 +214,7 @@ class Analysis :
         self.fake_run = opts.fake_run
 
         # Reporting
+        self.bundle = opts.bundle
         self.versions = pandas.Series()
         self.report = pandas.Series()
 
@@ -648,6 +665,7 @@ class Analysis :
             self.errors += ['Input genome FASTA ' + self.genome_fasta + ' cannot be found']
         else :
             self.load_genome()
+            
         self.will_have_genome_fasta = True
             
 
@@ -706,6 +724,14 @@ class Analysis :
         
         self.analysis += ['qcat_ont_fastq']
 
+
+    def validate_ont_fastq_info(self) :
+
+        if not self.will_have_ont_fastq :
+            return
+
+        self.analysis += ['ont_fastq_info']
+        
         
     def validate_lorma(self) :
         
@@ -841,6 +867,8 @@ class Analysis :
         
         self.analysis += ['medaka_ont_assembly']
 
+        # Assume this means we have an ONT assembly
+        self.will_have_ont_assembly = True
         
     @unless_only_basecall
     @unless_no_assembly
@@ -862,7 +890,7 @@ class Analysis :
         self.analysis += ['nanopolish_ont_assembly']
 
 
-    @unless_only_basecall                
+    @unless_only_basecall
     def validate_illumina_fastq(self) :
         
         if not self.illumina_fastq :
@@ -896,24 +924,54 @@ class Analysis :
                     read_lengths += [len(next(parser))]
                 self.illumina_read_length_mean = statistics.mean(read_lengths)
 
-        # Assume we want to use Illumina data to polish a given genome or ONT assembly
-        if self.will_have_genome_fasta and not self.no_assembly :
-            for utility in ['minimap2', 'pilon'] :
-                if self.validate_utility(utility, utility + ' is not on the PATH (required by --illumina-fastq).') :
-                    command = utility + ' --version'
-                    self.versions[utility] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
-
-            self.analysis += ['pilon_assembly']
-
-        elif not self.no_assembly :
-            if self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)') :
-                command = 'spades.py --version'
-                self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+        # Get the Illumina summary
+        self.analysis += ['illumina_fastq_info']
                 
-            self.analysis += ['spades_illumina_fastq']
-            self.will_have_genome_fasta = True
-            
+  
+    @unless_only_basecall
+    @unless_no_assembly
+    def validate_pilon(self) :
 
+        if not (self.will_have_ont_assembly and self.illumina_fastq) :
+            return
+
+        # TODO - Find bwa version if we are dealing with shorte reads
+        for utility in ['minimap2', 'pilon'] :
+            if self.validate_utility(utility, utility + ' is not on the PATH (required by --illumina-fastq).') :
+                command = utility + ' --version'
+                self.versions[utility] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+
+        self.analysis += ['pilon_assembly']
+
+
+    @unless_only_basecall
+    @unless_no_assembly
+    def validate_spades(self) :
+
+        if not self.illumina_fastq :
+            return
+        
+        if self.will_have_genome_fasta :
+            return
+
+        if self.validate_utility('spades.py', 'spades.py is not on the PATH (required by --illumina-fastq)') :
+            command = 'spades.py --version'
+            self.versions['spades'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+                
+        self.analysis += ['spades_illumina_fastq']
+        self.will_have_genome_fasta = True
+           
+            
+    @unless_only_basecall
+    @unless_no_assembly
+    def validate_evaluate_assembly(self) :
+
+        if not self.will_have_ont_assembly :
+            return
+
+        self.analysis += ['evaluate_assembly']
+            
+            
     @unless_only_basecall
     def validate_assembly_info(self) :
 
@@ -1086,6 +1144,13 @@ class Analysis :
             command = utility + ' --version'
             self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
 
+            
+    @unless_only_basecall
+    def validate_draw_amr_matrix(self) :
+
+        # Really just making this a method for consistency
+        self.analysis += ['draw_amr_matrix']
+
         
     @unless_only_basecall
     def validate_plasmids(self) :
@@ -1130,6 +1195,10 @@ class Analysis :
 
         if len(self.analysis) == 0 :
             return
+
+        if self.bundle :
+            if not os.path.isdir(self.bundle) :
+                self.errors += ['Can\'t find Tectonic bundle ' + self.bundle]
         
         self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
         
@@ -1162,6 +1231,8 @@ class Analysis :
         self.validate_guppy()
         
         self.validate_qcat()
+
+        self.validate_ont_fastq_info()
         
         self.validate_lorma()
         
@@ -1176,15 +1247,18 @@ class Analysis :
         self.validate_nanopolish()
         
         self.validate_illumina_fastq()
+        self.validate_pilon()
+        self.validate_spades()
 
+        self.validate_evaluate_assembly()
+        
         self.validate_assembly_info()
 
         self.validate_features()
         self.validate_blast()
         self.validate_reference()
         self.validate_mutations()
-        # TODO make this a function
-        self.analysis = self.analysis + ['draw_amr_matrix']
+        self.validate_draw_amr_matrix()
         
         self.validate_plasmids()
         self.validate_draw_features()
@@ -1465,6 +1539,41 @@ class Analysis :
                 barcode_analysis.go()
 
 
+    def ont_fastq_info(self) :
+
+        command = ' '.join(['cat',
+                            self.ont_fastq,
+                            '| awk \'{getline;print length($0);s += length($1);getline;getline;}END{print "+"s}\'',
+                            '| sort -gr',
+                            '| awk \'BEGIN{bp = 0;f = 0}{if(NR == 1){sub("+", "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}END{print n50"\t"NR"\t"s;exit}\''])
+        self.ont_n50, self.ont_read_count, self.ont_bases = [int(i) for i in re.split('\\t', self.print_and_run(command)[0])]
+        self.ont_bases = format_kmg(self.ont_bases, decimals = 1)
+
+        if self.ont_n50 <= self.ont_n50_min :
+            warning = 'ONT N50 (' + str(self.ont_n50) + ') is less than the recommended minimum (' + str(self.ont_n50_min) + ').'
+            self.add_warning(warning)
+            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+
+
+    def illumina_fastq_info(self) :
+
+        self.illumina_length_mean, self.illumina_read_count, self.illumina_bases = 0,0,0
+        opener = 'cat'
+        if re.search('\.(gz|gzip)$', self.illumina_fastq[0]) :
+            opener = 'gunzip -c'
+        for r in range(len(self.illumina_fastq)) :
+            r_fastq = self.illumina_fastq[r]
+            command = ' '.join([opener,
+                                r_fastq,
+                                '| awk \'{getline;s += length($1);getline;getline;}END{print s/NR"\t"NR"\t"s}\''])
+            values = [float(i) for i in re.split('\\t', self.print_and_run(command)[0])]
+            self.illumina_length_mean += values[0]
+            self.illumina_read_count += int(values[1])
+            self.illumina_bases += int(values[2])
+        self.illumina_length_mean /= len(self.illumina_fastq)
+        self.illumina_bases = format_kmg(self.illumina_bases, decimals = 1)
+
+            
     def lorma_ont_fastq(self) :
 
         self.print_and_log('Using lordec-correct to error-correct ONT reads', self.main_process_verbosity, self.main_process_color)
@@ -1608,24 +1717,12 @@ class Analysis :
         if self.error_correct :
             raw_or_corrected = '--nano-corr'
 
-        # Figure out the N50 in case it's too low
-        command = ' '.join(['cat',
-                            self.ont_fastq,
-                            '| awk \'{getline;print length($0);s += length($1);getline;getline;getline}END{print "+"s}\'',
-                            '| sort -gr',
-                            '| awk \'BEGIN{bp = 0}{if(NR == 1){sub("+", "", $1);s=$1}else{bp += $1;if(bp > s / 2){print $1"\t"s;exit}}}\''])
-        self.ont_n50, self.ont_bases = [int(i) for i in re.split('\\t', self.print_and_run(command)[0])]
-
-        if self.ont_n50 <= self.ont_n50_min :
-            warning = 'ONT N50 (' + str(self.ont_n50) + ') is less than the recommended minimum (' + str(self.ont_n50_min) + ').'
-            self.add_warning(warning)
-            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
-
+        # Actually run Flye
         command = ' '.join(['flye',
                             '--plasmid',
                             '--asm-coverage 150',
                             raw_or_corrected, self.ont_fastq,
-                            '--meta',
+                            #'--meta',
                             '-g', self.genome_assembly_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
@@ -1633,7 +1730,6 @@ class Analysis :
         self.print_and_run(command)
         self.validate_file_and_size_or_error(flye_fasta, 'Flye fasta', 'cannot be found after flye', 'is empty')
 
-        # We now use the Flye assembly as the genome
         self.genome_fasta = self.ont_assembly_dir + '/assembly.fasta'
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome fasta', 'cannot be found after copying Flye output', 'is empty')
         self.load_genome()
@@ -1641,19 +1737,21 @@ class Analysis :
         # Pull in the assembly summary and look at the coverage
         assembly_info_txt = os.path.join(self.ont_assembly_dir, 'assembly_info.txt')
         assembly_info = pandas.read_csv(assembly_info_txt, header = 0, index_col = 0, sep = '\t')
-        mean_coverage = (assembly_info['cov.'] * assembly_info['length']).sum() / assembly_info['length'].sum()
-
-        if mean_coverage <= self.ont_coverage_min :
-            warning = 'ONT mean coverage ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(mean_coverage, self.ont_coverage_min)
-            self.add_warning(warning)
-            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))        
         
         method = 'ONT reads were assembled using Flye (v ' + self.versions['flye'] + ').'
         self.report[self.methods_title][self.assembly_methods] = \
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
 
+        # Look for non-circular contigs
+        open_contigs = assembly_info.loc[assembly_info['circ.'] == 'N', :]
+        if open_contigs.shape[0] > 0 :
+            open_contig_ids = open_contigs.index.values
+            warning = 'Flye reported {:d} open contigs ({:s}); assembly may be incomplete.'.format(open_contigs.shape[0], ', '.join(open_contig_ids))
+            self.add_warning(warning)
+            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+        
         self.make_finish_file(self.ont_assembly_dir)
-         
+
         
     def racon_ont_assembly(self) :
 
@@ -1739,7 +1837,7 @@ class Analysis :
         self.print_and_log('Repairing contig names after Medaka', self.sub_process_verbosity, self.sub_process_color)
         self.genome_fasta = os.path.join(self.medaka_dir, 'assembly.fasta')
         command = ' '.join(['cat', self.medaka_fasta,
-                            '| awk \'{if($0 ~ /^>/){gsub(":.*", "", $0)}print}\'',
+                            '| awk \'{if($0 ~ /^>/){gsub(":.*", "", $0);gsub("_segment", "_", $0)}print}\'',
                             '>', self.genome_fasta])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
@@ -1855,6 +1953,7 @@ class Analysis :
         
 
     def run_nanopolish_range(self, nanopolish_range) :
+        
         print(nanopolish_range)
         nanopolish_vcf = self.nanopolish_prefix + '.' + nanopolish_range + '.vcf'
         while (1) :
@@ -1877,7 +1976,7 @@ class Analysis :
         
     def spades_illumina_fastq(self) :
 
-        self.print_and_log('Assembling Illumina FASTQ data', self.main_process_verbosity, self.main_process_color)
+        self.print_and_log('Assembling Illumina FASTQ data with SPAdes', self.main_process_verbosity, self.main_process_color)
         
         # Figure out where the assembly is going
         self.spades_dir = os.path.join(self.output_dir, 'spades')
@@ -1894,7 +1993,7 @@ class Analysis :
         command = ' '.join(['spades.py',
                             fastq_input,
                             '-o', self.spades_dir,
-                            '-t', str(self.threads),
+                           '-t', str(self.threads),
                             '--careful -k auto',
                             '1>' + spades_stdout, '2>' + spades_stderr])
         self.print_and_run(command)
@@ -1903,17 +2002,26 @@ class Analysis :
         if not self.illumina_paired_end :
             self.genome_fasta = os.path.join(self.spades_dir, 'contigs.fasta')
 
+        # Fix the silly contig names
+        self.print_and_log('Repairing contig names after SPAdes', self.sub_process_verbosity, self.sub_process_color)
+        fixed_names_fasta = os.path.join(self.spades_dir, 'fixed_names.fasta')
+        command = ' '.join(['cat', self.genome_fasta,
+                            '| awk \'{if($0 ~ /^>/){gsub("NODE", "contig", $0);gsub("_length.*", "", $0)}print}\'',
+                            '>', fixed_names_fasta])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(fixed_names_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
+            
         # Filter small contigs
         assembly_fasta = os.path.join(self.spades_dir, 'assembly.fasta')
         command = ' '.join(['faidx -i chromsizes',
-                            self.genome_fasta,
+                            fixed_names_fasta,
                             '| awk \'($2 > 1000){print $1}\'',
                             '| parallel faidx',
-                            self.genome_fasta,
+                            fixed_names_fasta,
                             '>', assembly_fasta])
         self.print_and_run(command)
         self.genome_fasta = assembly_fasta
-        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after SPAdes', 'is empty')
+        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after filtering short contigs', 'is empty')
 
         self.load_genome()
         
@@ -1936,7 +2044,7 @@ class Analysis :
         # See what mapping method to use - bwa aln or minimap 2
         if self.illumina_read_length_mean <= 65 :
             self.bwa_short_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
-            method = 'Illumina reads were mapped to the genome assembly using bwa aln'
+            method = 'Illumina reads were mapped to the genome assembly using bwa aln.'
         else : # We have longer short reads
             self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
             method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + str(self.versions['minimap2']) + ').'
@@ -1960,7 +2068,7 @@ class Analysis :
         # Actually run pilon
         self.print_and_log('Running Pilon', self.sub_process_verbosity, self.sub_process_color)
         pilon_stdout, pilon_stderr = self.std_files(os.path.join(self.pilon_dir, 'pilon'))
-        pilon_prefix = os.path.join(self.pilon_dir, 'assembly')
+        pilon_prefix = os.path.join(self.pilon_dir, 'pilon')
         self.pilon_fasta = pilon_prefix + '.fasta'
         bam_option = '--frags'
         if len(self.illumina_fastq) == 1 :
@@ -1972,8 +2080,14 @@ class Analysis :
                             '1>', pilon_stdout, '2>', pilon_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.pilon_fasta, 'Pilon FASTA', 'cannot be found after pilon', 'is empty')
-        
-        self.genome_fasta = self.pilon_fasta
+
+        self.print_and_log('Repairing contig names after Pilon', self.sub_process_verbosity, self.sub_process_color)
+        self.genome_fasta = os.path.join(self.pilon_dir, 'assembly.fasta')
+        command = ' '.join(['cat', self.pilon_fasta,
+                            '| awk \'{if($0 ~ /^>/){gsub("_pilon", "", $0)}print}\'',
+                            '>', self.genome_fasta])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
 
         self.load_genome()
 
@@ -1982,8 +2096,31 @@ class Analysis :
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
 
         self.make_finish_file(self.pilon_dir)
+
+
+    def evaluate_assembly(self) :
+
+        self.print_and_log('Evaluating assembly', self.main_process_verbosity, self.main_process_color)
         
+        genome_sizes = re.sub('.fasta', '.sizes', self.genome_fasta)
+        command = ' '.join(['faidx -i chromsizes', self.genome_fasta, '>', genome_sizes])
+        self.print_and_run(command)
+
+        assembly_info = pandas.read_csv(genome_sizes, sep = '\t', header = None)
+        assembly_info.columns = ['contig', 'length']
         
+        # Take a look at the number of contigs, their sizes, and circularity.  Warn if things don't look good
+        if assembly_info.shape[0] > 4 :
+            warning = 'Assembly produced {:d} contigs, more than ususally expected; assembly may be fragmented'.format(assembly_info.shape[0])
+            self.add_warning(warning)
+            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+        small_contigs = assembly_info.loc[assembly_info['length'] <= 3000, :]
+        if small_contigs.shape[0] > 0 :
+            warning = 'Assembly produced {:d} small contigs; assembly may include spurious sequences.'.format(small_contigs.shape[0])
+            self.add_warning(warning)
+            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+        
+    
     def assembly_info(self) :
 
         self.print_and_log('Getting assembly description/coverage', self.main_process_verbosity, self.main_process_color)
@@ -2006,7 +2143,14 @@ class Analysis :
             self.print_and_run(command)
             self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
 
-            self.contig_info['ont'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t')
+            self.contig_info['ONT'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').sort_values(1, axis = 0, ascending = False)
+
+            mean_coverage = (self.contig_info['ONT'].iloc[:, 1] * self.contig_info['ONT'].iloc[:, 2]).sum() / self.contig_info['ONT'].iloc[:, 1].sum()
+            
+            if mean_coverage <= self.ont_coverage_min :
+                warning = 'ONT mean coverage ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(mean_coverage, self.ont_coverage_min)
+                self.add_warning(warning)
+                self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))        
 
         if self.illumina_fastq :
             
@@ -2024,7 +2168,7 @@ class Analysis :
             self.print_and_run(command)
             self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
 
-            self.contig_info['illumina'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t')
+            self.contig_info['Illumina'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').sort_values(1, axis = 0, ascending = False)
             
         self.make_finish_file(self.info_dir)
         
@@ -2241,7 +2385,7 @@ class Analysis :
         self.snps = snps.loc[(snps.iloc[:, 1] != '.') & (snps.iloc[:, 2] != '.'), :]
 
         # See if any mutation regions intersect with deletions
-        # TODO make this its own function
+        # TODO make this its own function maybe?
         if self.mutation_region_bed :
             amr_deletion_bed = os.path.join(self.insertions_dir, 'amr_deletions.bed')
             command = ' '.join(['bedtools intersect',
@@ -2263,7 +2407,7 @@ class Analysis :
 
         self.make_finish_file(self.insertions_dir)
 
-
+        
     def quast_genome(self) :
 
         self.print_and_log('Running Quast of the genome vs. the reference sequence', self.main_process_verbosity, self.main_process_color) 
@@ -2359,16 +2503,9 @@ class Analysis :
                                 'sub("TICK_MINOR", "' + str(tick_minor) + '", $0);print}\'',
                                 '>', tick_conf])
             self.print_and_run(command)
-            
-            magnitude_powers = [10**9, 10**6, 10**3, 10**0]
-            magnitude_units = ['G', 'M', 'K', '']
-            for i in range(len(magnitude_units)) :
-                if contig_size > magnitude_powers[i] :
-                    magnitude_power = magnitude_powers[i]
-                    magnitude_unit = magnitude_units[i]
-                    break
-            tick_labels = ['{:0.0f}'.format(i / magnitude_power) + magnitude_unit for i in tick_at]
 
+            tick_labels = [format_kmg(i) for i in tick_at]
+            
             tick_data = pandas.DataFrame()
             for i in range(len(tick_labels)) :
                 tick_data = pandas.concat([tick_data, pandas.Series([contig, tick_at[i], tick_at[i], tick_labels[i]])], axis = 1)
@@ -2507,7 +2644,7 @@ class Analysis :
 
         method = 'Mutations were identified using ' + \
             'samtools mpileup (v ' + self.versions['samtools'] +  ') ' + \
-            'and  bcftools (v ' + self.versions['bcftools'] + ')'
+            'and  bcftools (v ' + self.versions['bcftools'] + ').'
         self.report[self.methods_title][self.mutation_methods] = \
             self.report[self.methods_title][self.mutation_methods].append(pandas.Series(method))
 
@@ -2530,7 +2667,12 @@ class Analysis :
                             '| awk \'($2 <= 500000){print $1}\'',
                             '| parallel -n1 -n1 faidx', self.genome_fasta, '>', smaller_contigs_fasta])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(smaller_contigs_fasta, 'Region plain text MPILEUP file', 'cannot be found', 'is empty')
+
+        # See if there is anything in the small contigs file; if not, we done
+        # TODO - Add something to the report about no small contigs
+        small_contigs = self.load_fasta(smaller_contigs_fasta)
+        if len(small_contigs) == 0 :
+            return
                                     
         # Query plasmid sequences against the assembly using minimap2
         self.print_and_log('Running minimap2 against the plasmid database', self.sub_process_verbosity, self.sub_process_color)
@@ -2649,9 +2791,6 @@ class Analysis :
             # Add blank feature sets for the header and ruler
             real_sets = feature_sets_to_plot.index.tolist()
             empty_set = [GraphicFeature(start = 1, end = len(contig), color = '#FFFFFF')]
-            #feature_sets_to_plot['header'] = empty_set
-            #feature_sets_to_plot['footer'] = empty_set
-            #feature_sets_to_plot = feature_sets_to_plot[['header'] + real_sets + ['footer']]
 
             # Figure out high each plot will be on its own for later scaling
             expected_plot_heights = []
@@ -2776,9 +2915,15 @@ class Analysis :
 
         self.validate_file_and_size_or_error(self.report_tex, 'Report TEX', 'cannot be found', 'is empty')
 
+        # See if we are using a local bundle.  
+        bundle_arg = ''
+        if not (self.bundle is None) :
+            bundle_arg = '--bundle ' + self.bundle
+        
         tectonic_stdout, tectonic_stderr = self.std_files(os.path.join(self.report_dir, 'tectonic'))
-        command = ' '.join(['tectonic --bundle /scicomp/home/kzq1/Downloads/tlextras',
-                           self.report_tex,
+        command = ' '.join(['tectonic',
+                            bundle_arg,
+                            self.report_tex,
                            '1>' + tectonic_stdout, '2>' + tectonic_stderr])
         self.print_and_run(command)
 
@@ -2974,6 +3119,8 @@ if __name__ == '__main__':
                         help = 'Number of worker threads to use (default : %(default)s)')
     other_group.add_argument('--verbosity', required = False, type=int, default = 1, metavar = '<INT>',
                         help = 'How much information to print as PIMA runs (default : %(default)s)')
+    other_group.add_argument('--bundle', required = False, type=str, default = None, metavar = '<PATH>',
+                        help = 'Local Tectonic bundle (default : %(default)s)')
     other_group.add_argument('--fake-run', required = False, default = False, action = 'store_true',
                              help = 'Don\'t actually run the pipeline, just pretend to (default : %(default)s)')
 
