@@ -67,9 +67,24 @@ class PimaReport :
                     if self.analysis.reference_fasta :
                         table.add_row(('Reference', self.analysis.reference_fasta))
                         
-                self.doc.append(VerticalSpace("20pt"))
+                self.doc.append(VerticalSpace("10pt"))
 
+            if not (self.analysis.ont_n50 is None ):
+                with self.doc.create(Subsection('ONT library statistics', numbering = False)) :
+                    with self.doc.create(Tabular('ll', width = 2)) as table :
+                        table.add_row(('ONT N50', '{:,}'.format(self.analysis.ont_n50)))
+                        table.add_row(('ONT reads', '{:,}'.format(self.analysis.ont_read_count)))
+                        table.add_row(('ONT bases', '{:s}'.format(self.analysis.ont_bases)))
+                    self.doc.append(VerticalSpace("10pt"))
 
+            if not (self.analysis.illumina_length_mean is None ):
+                with self.doc.create(Subsection('Illumina library statistics', numbering = False)) :
+                    with self.doc.create(Tabular('ll', width = 2)) as table :
+                        table.add_row(('Illumina mean length', '{:.1f}'.format(self.analysis.illumina_length_mean)))
+                        table.add_row(('Illumina reads', '{:,}'.format(self.analysis.illumina_read_count)))
+                        table.add_row(('Illumina bases', '{:s}'.format(self.analysis.illumina_bases)))
+                    self.doc.append(VerticalSpace("10pt"))
+                    
             if not (self.analysis.genome is None) :
                 with self.doc.create(Subsection('Assembly statistics', numbering = False)) :
                     with self.doc.create(Tabular('ll', width = 2)) as table :
@@ -81,20 +96,21 @@ class PimaReport :
                         genome_size = si_format(genome_size, precision = 1)
                         table.add_row(('Assembly size', genome_size))
 
+                    self.doc.append(VerticalSpace("10pt"))
 
             if len(self.report[self.analysis.assembly_title]) > 0 :
                 if len(self.report[self.analysis.assembly_title][self.analysis.assembly_notes_title]) > 0 :
                     with self.doc.create(Subsection(self.analysis.assembly_notes_title, numbering = False)) :
                         left = FlushLeft()
                         for note in self.report[self.analysis.assembly_title][self.analysis.assembly_notes_title] :
-                            print(note)
                             left.append(note)
                             left.append(LineBreak())
                         self.doc.append(left)
+                    self.doc.append(VerticalSpace("10pt"))
                 
             if not (self.analysis.contig_info is None) :
 
-                for method in ['ont', 'illumina'] :
+                for method in ['ONT', 'Illumina'] :
 
                     if not method in self.analysis.contig_info.index :
                             continue
@@ -108,10 +124,13 @@ class PimaReport :
                         with self.doc.create(Tabular(table_format)) as table :
                             table.add_row(('Contig', 'Length (bp)', 'Coverage (X)'))
                             table.add_hline()
+                            formatted = self.analysis.contig_info[method].copy()
+                            formatted.iloc[:,1] = formatted.iloc[:,1].apply(lambda x: '{:,}'.format(x))
                             for i in range(self.analysis.contig_info[method].shape[0]) :
-                                table.add_row(self.analysis.contig_info[method].iloc[i, :].values.tolist())
+                                table.add_row(formatted.iloc[i, :].values.tolist())
 
                         self.doc.append(LineBreak())
+                        self.doc.append(VerticalSpace("10pt"))
 
                         
     def add_alignment(self) :
@@ -128,8 +147,8 @@ class PimaReport :
             with self.doc.create(Subsection(self.analysis.snp_indel_title, numbering = False)) :
 
                 with self.doc.create(Tabular('ll', width = 2)) as table :
-                    table.add_row(('SNPs', self.analysis.quast_mismatches))
-                    table.add_row(('Small indels', self.analysis.quast_indels))
+                    table.add_row(('SNPs', '{:,}'.format(self.analysis.quast_mismatches)))
+                    table.add_row(('Small indels', '{:,}'.format(self.analysis.quast_indels)))
                 self.doc.append(LineBreak())
                     
             if len(self.report[self.analysis.alignment_title][self.analysis.alignment_notes_title]) > 0 :
@@ -163,7 +182,10 @@ class PimaReport :
         with self.doc.create(Section(self.analysis.feature_title, numbering = False)) :
             for feature_name in self.report[self.analysis.feature_title].index.tolist() :
 
-                features = self.report[self.analysis.feature_title][feature_name]
+                features = self.report[self.analysis.feature_title][feature_name].copy()
+                features.iloc[:, 1] = features.iloc[:, 1].apply(lambda x: '{:,}'.format(x))
+                features.iloc[:, 2] = features.iloc[:, 2].apply(lambda x: '{:,}'.format(x))
+                
                 table_format = 'l' * (features.shape[1] - 1)
 
                 with self.doc.create(Subsection(feature_name, numbering = False)) :
@@ -178,7 +200,7 @@ class PimaReport :
                         contig_features = features.loc[(features.iloc[:, 0] == contig), :]
                         
                         with self.doc.create(Tabular(table_format)) as table :
-                            table.add_row(('Start', 'Stop', 'Feature', 'Identity', 'Strand'))
+                            table.add_row(('Start', 'Stop', 'Feature', 'Identity (%)', 'Strand'))
                             table.add_hline()
                             for i in range(contig_features.shape[0]) :
                                 feature = contig_features.iloc[i, :].copy(deep = True)
@@ -186,8 +208,7 @@ class PimaReport :
                                 table.add_row(feature[1:].values.tolist())
 
                         self.doc.append(LineBreak())
-                        self.doc.append(VerticalSpace("20pt"))
-                        self.doc.append(LineBreak())
+                        self.doc.append(VerticalSpace("10pt"))
                                         
                                         
     def add_feature_plots(self) :
@@ -210,7 +231,6 @@ class PimaReport :
                 with self.doc.create(Figure(position = 'h!')) as figure :
                     figure.add_image(image_png, width = '7in')
 
-            
                                 
     def add_mutations(self) :
 
@@ -228,12 +248,14 @@ class PimaReport :
 
             for region_name in mutations.index.tolist() :
 
-                region_mutations = mutations[region_name]
+                region_mutations = mutations[region_name].copy()
 
                 with self.doc.create(Subsection(region_name, numbering = False)) :
                     if (region_mutations.shape[0] == 0) :
                         self.doc.append('None')
                         continue
+
+                    region_mutations.iloc[:, 1] = region_mutations.iloc[:, 1].apply(lambda x: '{:,}'.format(x))
                     
                     with self.doc.create(Tabular(table_format)) as table :
                         table.add_row(('Reference contig', 'Position', 'Reference', 'Alternate'))
@@ -263,7 +285,6 @@ class PimaReport :
             
             with self.doc.create(Figure(position = 'h!')) as figure :
                 figure.add_image(amr_matrix['png'], width = '7in')
-            
                             
 
     def add_large_indels(self) :
@@ -283,12 +304,16 @@ class PimaReport :
         
             for genome in ['Reference insertions', 'Query insertions'] :
 
-                genome_indels = large_indels[genome]
+                genome_indels = large_indels[genome].copy()
                 
                 with self.doc.create(Subsection(genome, numbering = False)) :
                     if (genome_indels.shape[0] == 0) :
                         self.doc.append('None')
                         continue
+
+                    genome_indels.iloc[:, 1] = genome_indels.iloc[:, 1].apply(lambda x: '{:,}'.format(x))
+                    genome_indels.iloc[:, 2] = genome_indels.iloc[:, 2].apply(lambda x: '{:,}'.format(x))
+                    genome_indels.iloc[:, 3] = genome_indels.iloc[:, 3].apply(lambda x: '{:,}'.format(x))
 
                     table_format = 'l' * genome_indels.shape[1]
                     
@@ -305,7 +330,7 @@ class PimaReport :
             return
 
         # Make sure we looked for mutations
-        plasmids = self.report[self.analysis.plasmid_title]
+        plasmids = self.report[self.analysis.plasmid_title].copy()
 
         if plasmids is None :
             return
@@ -318,6 +343,10 @@ class PimaReport :
                 self.doc.append('None')
                 return
 
+            plasmids.iloc[:, 3] = plasmids.iloc[:, 3].apply(lambda x: '{:,}'.format(x))
+            plasmids.iloc[:, 4] = plasmids.iloc[:, 4].apply(lambda x: '{:,}'.format(x))
+            plasmids.iloc[:, 5] = plasmids.iloc[:, 5].apply(lambda x: '{:,}'.format(x))
+            
             table_format = 'p{0.15\linewidth}p{0.3\linewidth}p{0.1\linewidth}p{0.08\linewidth}p{0.08\linewidth}p{0.08\linewidth}'
 
             with self.doc.create(Tabular(table_format)) as table :
