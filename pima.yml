@@ -117,7 +117,7 @@ dependencies:
   - markdown=3.2.1=py_0
   - matplotlib=3.2.1=0
   - matplotlib-base=3.2.1=py36hb8e4980_0
-  - medaka=0.12.1=py36h148d290_0
+  - medaka=1.0.1=py36h148d290_0
   - minimap2=2.17=h8b12597_1
   - multiprocess=0.70.9=py36h8c4c3a4_1
   - mummer=3.23=pl526he1b5a44_11
