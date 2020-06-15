@@ -25,6 +25,8 @@ import Bio.SeqIO
 import pathos.multiprocessing as mp
 
 from dna_features_viewer import GraphicFeature, GraphicRecord
+import matplotlib as mpl
+mpl.use('Agg')
 import matplotlib.pyplot as plt
 
 from pima_report import PimaReport
