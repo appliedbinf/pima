@@ -935,7 +935,7 @@ class Analysis :
     @unless_no_assembly
     def validate_pilon(self) :
 
-        if not (self.will_have_ont_assembly and self.illumina_fastq) :
+        if not (self.will_have_genome_fasta and self.illumina_fastq) :
             return
 
         # TODO - Find bwa version if we are dealing with shorte reads
@@ -2906,7 +2906,9 @@ class Analysis :
         # Roll up deletions that might confer resistance
         if self.amr_deletions.shape[0] > 0 :
             for deletion_idx, deleted_gene in self.amr_deletions.iterrows() :
-                amr_to_draw = amr_to_draw.append(pandas.Series(['\u0394' + deleted_gene[3], deleted_gene[5]], index = amr_to_draw.columns))
+                amr_to_draw = amr_to_draw.append(pandas.Series(['\u0394' + deleted_gene[3], deleted_gene[5]],
+                                                               name = amr_to_draw.shape[0],
+                                                               index = amr_to_draw.columns))
                 
         # If there are no AMR hits, we can't draw the matrix
         if amr_to_draw.shape[0] <= 1 :
