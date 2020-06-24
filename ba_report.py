@@ -59,7 +59,7 @@ class PimaReport :
                 self.doc.append(cdc_advisory)
 
             with self.doc.create(Subsection('Run information', numbering = False)) :
-                with self.doc.create(Tabular('lp{6cm}lp{20cm}', width = 2)) as table :
+                with self.doc.create(Tabular('p{0.15\linewidth}p{0.65\linewidth}', width = 2)) as table :
                     table.add_row(('Date', self.analysis.start_time))
                     if self.analysis.ont_fast5 :
                         table.add_row(('ONT FAST5', self.analysis.ont_fast5))
@@ -188,6 +188,9 @@ class PimaReport :
             for feature_name in self.report[self.analysis.feature_title].index.tolist() :
 
                 features = self.report[self.analysis.feature_title][feature_name].copy()
+                if features.shape[0] == 0 :
+                    continue
+                    
                 features.iloc[:, 1] = features.iloc[:, 1].apply(lambda x: '{:,}'.format(x))
                 features.iloc[:, 2] = features.iloc[:, 2].apply(lambda x: '{:,}'.format(x))
                 
