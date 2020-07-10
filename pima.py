@@ -29,7 +29,7 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
-from pima_report import PimaReport
+from ba_report import PimaReport
 
 pandas.set_option('display.max_colwidth', 200)
 
@@ -159,6 +159,7 @@ class Analysis :
         self.ont_n50_min = 2500
         self.ont_coverage_min = 30
         self.illumina_length_mean = None
+        self.illumina_coverage_min = 30
         self.nanopolish = opts.nanopolish
         self.nanopolish_coverage_max = opts.max_nanopolish_coverage
         self.pilon = opts.pilon
@@ -934,7 +935,7 @@ class Analysis :
     @unless_no_assembly
     def validate_pilon(self) :
 
-        if not (self.will_have_ont_assembly and self.illumina_fastq) :
+        if not (self.will_have_genome_fasta and self.illumina_fastq) :
             return
 
         # TODO - Find bwa version if we are dealing with shorte reads
@@ -1110,18 +1111,18 @@ class Analysis :
 
         # Either from the built in set or given as an argument, make sure the file is there
         if self.validate_file_and_size(self.mutation_region_bed) :
-            mutation_regions = pandas.read_csv(self.mutation_region_bed, header = None, sep = '\t')
+            self.mutation_regions = pandas.read_csv(self.mutation_region_bed, header = 0, sep = '\t', index_col = None)
 
-            if mutation_regions.shape[1] != 6 :
+            if self.mutation_regions.shape[1] != 7 :
                 self.errors += ['Mutation regions should be a six column file.']
 
-            if mutation_regions.shape[0] == 0 :
+            if self.mutation_regions.shape[0] == 0 :
                 self.errors += ['No rows in mutation regions file.']
                 
             if self.reference_fasta :
                 # Make sure that the positions in the BED file fall within the chromosomes provided in the reference sequence
-                for mutation_region in range(mutation_regions.shape[0]) :
-                    mutation_region = mutation_regions.iloc[mutation_region, :]
+                for mutation_region in range(self.mutation_regions.shape[0]) :
+                    mutation_region = self.mutation_regions.iloc[mutation_region, :]
                     if not (mutation_region[0] in self.reference) :
                         self.errors += ['Mutation region ' + ' '.join(mutation_region.astype(str)) + ' not found in reference genome.']
                         continue
@@ -2121,8 +2122,9 @@ class Analysis :
             self.add_warning(warning)
             self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
         small_contigs = assembly_info.loc[assembly_info['length'] <= 3000, :]
+        print(small_contigs)
         if small_contigs.shape[0] > 0 :
-            warning = 'Assembly produced {:d} small contigs; assembly may include spurious sequences.'.format(small_contigs.shape[0])
+            warning = 'Assembly produced {:d} small contigs ({:s}); assembly may include spurious sequences.'.format(small_contigs.shape[0], ', '.join(small_contigs['contig']))
             self.add_warning(warning)
             self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
         
@@ -2150,14 +2152,31 @@ class Analysis :
             self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
 
             self.contig_info['ONT'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').sort_values(1, axis = 0, ascending = False)
+            self.contig_info['ONT'].columns = ['contig', 'size', 'coverage']
 
             mean_coverage = (self.contig_info['ONT'].iloc[:, 1] * self.contig_info['ONT'].iloc[:, 2]).sum() / self.contig_info['ONT'].iloc[:, 1].sum()
             
             if mean_coverage <= self.ont_coverage_min :
                 warning = 'ONT mean coverage ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(mean_coverage, self.ont_coverage_min)
                 self.add_warning(warning)
-                self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))        
+                self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
 
+            # If some contigs have low coverage, report that
+            low_coverage = self.contig_info['ONT'].loc[self.contig_info['ONT']['coverage'] < self.ont_coverage_min, :]
+            if low_coverage.shape[0] >= 0 :
+                for contig_i in range(low_coverage.shape[0]) :
+                    warning = 'ONT coverage of {:s} ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], self.ont_coverage_min)
+                    self.add_warning(warning)
+                    self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+
+            fold_coverage = self.contig_info['ONT']['coverage'] / mean_coverage
+            low_coverage = self.contig_info['ONT'].loc[fold_coverage < 1/5, :]
+            if low_coverage.shape[0] >= 0 :
+                for contig_i in range(low_coverage.shape[0]) :
+                    warning = 'ONT coverage of {:s} ({:.0f}X) is less than 1/5 the mean coverage ({:.0f}X).'.format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], mean_coverage)
+                    self.add_warning(warning)
+                    self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+            
         if self.illumina_fastq :
             
             coverage_bam = os.path.join(self.info_dir, 'illumina_coverage.bam')
@@ -2175,7 +2194,32 @@ class Analysis :
             self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
 
             self.contig_info['Illumina'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').sort_values(1, axis = 0, ascending = False)
+            self.contig_info['Illumina'].columns = ['contig', 'size', 'coverage']
+
+            mean_coverage = (self.contig_info['Illumina'].iloc[:, 1] * self.contig_info['Illumina'].iloc[:, 2]).sum() / self.contig_info['Illumina'].iloc[:, 1].sum()
+                        
+            if mean_coverage <= self.illumina_coverage_min :
+                warning = 'Illumina mean coverage ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(mean_coverage, self.illumina_coverage_min)
+                self.add_warning(warning)
+                self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+
             
+            # If some contigs have low coverage, report that
+            low_coverage = self.contig_info['Illumina'].loc[self.contig_info['Illumina']['coverage'] < self.ont_coverage_min, :]
+            if low_coverage.shape[0] >= 0 :
+                for contig_i in range(low_coverage.shape[0]) :
+                    warning = 'Illumina coverage of {:s} ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2] , self.illumina_coverage_min)
+                    self.add_warning(warning)
+                    self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+
+            fold_coverage = self.contig_info['Illumina']['coverage'] / mean_coverage
+            low_coverage = self.contig_info['Illumina'].loc[fold_coverage < 1/5, :]
+            if low_coverage.shape[0] >= 0 :
+                for contig_i in range(low_coverage.shape[0]) :
+                    warning = 'Illumina coverage of {:s} ({:.0f}X) is less than 1/5 the mean coverage ({:.0f}X).'.format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], mean_coverage)
+                    self.add_warning(warning)
+                    self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+                    
         self.make_finish_file(self.info_dir)
         
         
@@ -2408,7 +2452,7 @@ class Analysis :
                 self.amr_deletions = pandas.DataFrame()
 
             if self.amr_deletions.shape[0] > 0 :
-                    self.amr_deletions.columns = ['contig', 'start', 'stop', 'description', 'type', 'drug']
+                    self.amr_deletions.columns = ['contig', 'start', 'stop', 'name', 'type', 'drug', 'note']
                     self.amr_deletions = self.amr_deletions.loc[self.amr_deletions['type'].isin(['large-deletion', 'any']), :]
 
         self.make_finish_file(self.insertions_dir)
@@ -2496,8 +2540,7 @@ class Analysis :
             self.print_and_run(command)
 
             # Figure out the tick labels to use and where to place them
-            # We don't actually want the last tick
-            tick_at = pretty(1, len(self.reference[contig].seq), 12).astype(int)[:-1]
+            tick_at = pretty(1, len(self.reference[contig].seq), 12).astype(int)[:-1] # We don't actually want the last tick cause this thing is circular
             
             tick_major = tick_at[1] - tick_at[0]
             tick_minor = tick_major / 5
@@ -2556,19 +2599,16 @@ class Analysis :
             self.report[self.methods_title][self.mutation_methods].append(pandas.Series(methods))
 
         # Pull out each region, one at a time
-        region_data = pandas.read_csv(filepath_or_buffer = self.mutation_region_bed, sep = '\t', header = None)
-        region_data.columns = ['contig', 'start', 'stop', 'description', 'type', 'drug']
+        region_data = self.mutation_regions
 
         for region_i in range(region_data.shape[0]) :
 
-            region_description = region_data.loc[region_i,'description']
-            region_type = region_data.loc[region_i, 'type']
-            region_drug = region_data.loc[region_i, 'drug']
+            region  = region_data.iloc[region_i, :]
 
-            if not region_type in ['snp', 'small-indel', 'any'] :
+            if not region['type'] in ['snp', 'small-indel', 'any'] :
                 continue
 
-            self.print_and_log('Finding AMR mutations for ' + region_description,
+            self.print_and_log('Finding AMR mutations for ' + region['name'],
                                self.sub_process_verbosity, self.sub_process_color)
             region_dir = os.path.join(self.mutations_dir, 'region_' + str(region_i))
             os.mkdir(region_dir)
@@ -2631,22 +2671,23 @@ class Analysis :
 
             region_mutations = pandas.read_csv(filepath_or_buffer = region_vcf, sep = '\t', header = 0)
             region_mutations = pandas.concat([region_mutations,
-                                              pandas.DataFrame(numpy.repeat(region_description, region_mutations.shape[0]))], axis = 1)
+                                              pandas.DataFrame(numpy.repeat(region['name'], region_mutations.shape[0]))], axis = 1)
 
             if region_mutations.shape[0] == 0 :
                 continue
 
             # Figure out what kind of mutations are in this region
             region_mutation_types = pandas.Series(['snp'] * region_mutations.shape[0], name = 'TYPE', index = region_mutations.index)
-            region_mutation_types[region_mutations['REF'].str.len() != region_mutations['ALT'].str.len() ] = 'small-indel'
-            region_mutation_drugs = pandas.Series([region_drug] * region_mutations.shape[0], name = 'DRUG',  index = region_mutations.index)
-            region_mutations = pandas.concat([region_mutations, region_mutation_types, region_mutation_drugs], axis = 1)
-            region_mutations = region_mutations[['#CHROM', 'POS', 'TYPE', 'REF', 'ALT', 'DRUG']]
+            region_mutation_types[region_mutations['REF'].str.len() != region_mutations['ALT'].str.len()] = 'small-indel'
+            region_mutation_drugs = pandas.Series(region['drug'] * region_mutations.shape[0], name = 'DRUG',  index = region_mutations.index)
+            region_notes = pandas.Series(region['note'] * region_mutations.shape[0], name = 'NOTE', index = region_mutations.index)
+            region_mutations = pandas.concat([region_mutations, region_mutation_types, region_mutation_drugs, region_notes], axis = 1)
+            region_mutations = region_mutations[['#CHROM', 'POS', 'TYPE', 'REF', 'ALT', 'DRUG', 'NOTE']]
 
-            self.amr_mutations[region_description] = region_mutations
+            self.amr_mutations[region['name']] = region_mutations
                 
             # Keep track of mutations for reporting
-            self.report[self.mutation_title][region_description] = region_mutations
+            self.report[self.mutation_title][region['name']] = region_mutations
 
         method = 'Mutations were identified using ' + \
             'samtools mpileup (v ' + self.versions['samtools'] +  ') ' + \
@@ -2869,12 +2910,13 @@ class Analysis :
         # Roll up deletions that might confer resistance
         if self.amr_deletions.shape[0] > 0 :
             for deletion_idx, deleted_gene in self.amr_deletions.iterrows() :
-                amr_to_draw = amr_to_draw.append(pandas.Series(['\u0394' + deleted_gene[3], deleted_gene[5]], index = amr_to_draw.columns))
+                amr_to_draw = amr_to_draw.append(pandas.Series(['\u0394' + deleted_gene[3], deleted_gene[5]],
+                                                               name = amr_to_draw.shape[0],
+                                                               index = amr_to_draw.columns))
                 
         # If there are no AMR hits, we can't draw the matrix
-        if amr_to_draw.shape[0] == 0 :
+        if amr_to_draw.shape[0] <= 1 :
             return
-
 
         present_genes = amr_to_draw['gene'].unique()
         present_drugs = amr_to_draw['drug'].unique()
