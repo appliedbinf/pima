@@ -17,6 +17,7 @@ from pylatex.utils import italic, bold
 
 import os
 
+
 class PimaReport :
     
     def __init__(self, analysis) :
