@@ -1723,10 +1723,10 @@ class Analysis :
         # Actually run Flye
         command = ' '.join(['flye',
                             '--plasmid',
-                            '--asm-coverage 150',
+#                            '--asm-coverage 60',
                             raw_or_corrected, self.ont_fastq,
-                            #'--meta',
-                            '-g', self.genome_assembly_size,
+                            '--meta',
+#                            '-g', self.genome_assembly_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
                             '1>', flye_stdout, '2>', flye_stderr])
