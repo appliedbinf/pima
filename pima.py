@@ -306,7 +306,11 @@ class Analysis :
             
     def run_command(self, command) :
         if not self.fake_run :
-            return(re.split('\\n', subprocess.check_output(command, shell = True).decode('utf-8')))
+            try : 
+                return(re.split('\\n', subprocess.check_output(command, shell = True).decode('utf-8')))
+            except :
+                self.print_and_log('Command ' + command + ' failed; exiting', 0, Colors.FAIL)
+                self.error_out()
 
             
     def print_and_run(self, command) :
@@ -1727,7 +1731,6 @@ class Analysis :
         # Actually run Flye
         command = ' '.join(['flye',
                             '--plasmid',
-                            '--asm-coverage 50',
                             raw_or_corrected, self.ont_fastq,
                             '--meta',
                             '-g', self.genome_assembly_size,
