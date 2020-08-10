@@ -1447,6 +1447,7 @@ class Analysis :
                     '--gpu_runners_per_device 8',
                     '--compress-fastq',
                     '--device "cuda:0"',
+                    '--fast5_out',
                     '--flowcell FLO-MIN106 --kit SQK-RBK004',
                     '1>' + guppy_stdout, '2>' + guppy_stderr])
         self.print_and_run(command)
@@ -1544,7 +1545,10 @@ class Analysis :
 
     def ont_fastq_info(self) :
 
-        command = ' '.join(['cat',
+        opener = 'cat'
+        if (re.search('\.(gz|gzip)$', self.ont_fastq)) :
+            opener = 'gunzip -c'
+        command = ' '.join([opener,
                             self.ont_fastq,
                             '| awk \'{getline;print length($0);s += length($1);getline;getline;}END{print "+"s}\'',
                             '| sort -gr',
@@ -1723,10 +1727,10 @@ class Analysis :
         # Actually run Flye
         command = ' '.join(['flye',
                             '--plasmid',
-#                            '--asm-coverage 60',
+                            '--asm-coverage 50',
                             raw_or_corrected, self.ont_fastq,
                             '--meta',
-#                            '-g', self.genome_assembly_size,
+                            '-g', self.genome_assembly_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
                             '1>', flye_stdout, '2>', flye_stderr])

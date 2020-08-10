@@ -184,6 +184,8 @@ class PimaReport :
             for feature_name in self.report[self.analysis.feature_title].index.tolist() :
 
                 features = self.report[self.analysis.feature_title][feature_name].copy()
+                if features.shape[0] == 0 :
+                    continue
                 features.iloc[:, 1] = features.iloc[:, 1].apply(lambda x: '{:,}'.format(x))
                 features.iloc[:, 2] = features.iloc[:, 2].apply(lambda x: '{:,}'.format(x))
                 

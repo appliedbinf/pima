@@ -22,7 +22,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     maxTargetLength = 300000,
     minQueryLength = 500,
     makeCircos = FALSE,
-    minQueryCoverage = 3/4, minTargetCoverage = 1/4,
+    minQueryCoverage = 1/10, minTargetCoverage = 1/10,
     searchDepth = NULL,
     verbosity = 0) {
 
@@ -188,10 +188,12 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     targetIDs = plasmidHits[,'target']
     targetIDs = gsub("\\|$", "", targetIDs)
     targetIDs = gsub(".*(\\|.*)$", "\\1", targetIDs)
-    targetIDs = cbind(gsub("\\|", "", targetIDs))
+    noDotIDs = gsub("\\|", "", targetIDs)
+    noDotIDs = gsub("(^H[^.]+).[0-9]+$", "\\1", noDotIDs)
+    noDotIDs = cbind(noDotIDs)
 
     targetFile = paste0(outputDirectory, '/targets.tsv', sep = '')
-    write.table(file = targetFile, x = targetIDs, quote = FALSE, row.names = FALSE, col.names = FALSE)
+    write.table(file = targetFile, x = noDotIDs, quote = FALSE, row.names = FALSE, col.names = FALSE)
     command = paste('blastdbcmd -db', plasmidDatabase,
         '-entry_batch', targetFile,
         '| grep ">"')
@@ -328,7 +330,8 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
                     penalized = TRUE
                 }
 
-                plasmidCoverage[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0] = 1
+                plasmidCoverage[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0] =
+                    plasmidCoverage[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0] + 1
                 contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] = 1
             }
 
@@ -338,6 +341,12 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
             } else {
                 plasmidToContig[[target]][[query]] = plasmidToContig[[target]][[query]] + score
             }
+            if (target == 'NZ_GG692894.1' && query == 'contig_3_0') {
+                print('NZ_GG692894.1')
+                print(sum(plasmidCoverage[[target]]))
+                print(sum(contigCoverage[[query]][[target]]))
+            }
+
         }
         
         ## Get the best set of plasmids out, i.e., the set with the most bases matching between the contig and plasmid
@@ -533,7 +542,7 @@ pChunks = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     maxTargetLength = 300000,
     minQueryLength = 200,
     makeCircos = FALSE,
-    minQueryCoverage = 2/3, minTargetCoverage = 1/50,
+    minQueryCoverage = 1/10, minTargetCoverage = 1/50,
     searchDepth = c(1),
     threads = 1,
     verbosity = 2) {
@@ -592,7 +601,7 @@ pChunks = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
                                             maxTargetLength = 300000,
                                             minQueryLength = 200,
                                             makeCircos = makeCircos,
-                                            minQueryCoverage = 2/3, minTargetCoverage = 1/50,
+                                            minQueryCoverage = 1/10, minTargetCoverage = 1/10,
                                             searchDepth = searchDepths[i,],  ## Search depth i
                                             verbosity = verbosity)
                            },
