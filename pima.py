@@ -871,6 +871,9 @@ class Analysis :
         if self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)') :
             command = 'medaka --version'
             self.versions['medaka'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+#            command = 'medaka tools list_models'
+#            models, default = self.print_and_run_command(command)[[0,1]]
+#            print(models)
         
         self.analysis += ['medaka_ont_assembly']
 
@@ -1733,7 +1736,8 @@ class Analysis :
                             '--plasmid',
                             raw_or_corrected, self.ont_fastq,
                             '--meta',
-                            '-g', self.genome_assembly_size,
+                            '--asm-coverage 75',
+                            '--genome-size', self.genome_assembly_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
                             '1>', flye_stdout, '2>', flye_stderr])
