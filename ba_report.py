@@ -17,6 +17,7 @@ from pylatex.utils import italic, bold
 
 import os
 
+cdc_advisory = 'The analysis and report presented here should be treated as preliminary.  Please contact the CDC/BDRD with any results regarding Bacillus anthracis.'
 
 class PimaReport :
     
@@ -54,8 +55,11 @@ class PimaReport :
 
         with self.doc.create(Section(self.analysis.summary_title, numbering = False)) :
 
+            with self.doc.create(Subsection('CDC Advisory', numbering = False)) as subsection:
+                self.doc.append(cdc_advisory)
+
             with self.doc.create(Subsection('Run information', numbering = False)) :
-                with self.doc.create(Tabular('lp{6cm}lp{20cm}', width = 2)) as table :
+                with self.doc.create(Tabular('p{0.15\linewidth}p{0.65\linewidth}', width = 2)) as table :
                     table.add_row(('Date', self.analysis.start_time))
                     if self.analysis.ont_fast5 :
                         table.add_row(('ONT FAST5', self.analysis.ont_fast5))
@@ -186,6 +190,7 @@ class PimaReport :
                 features = self.report[self.analysis.feature_title][feature_name].copy()
                 if features.shape[0] == 0 :
                     continue
+                    
                 features.iloc[:, 1] = features.iloc[:, 1].apply(lambda x: '{:,}'.format(x))
                 features.iloc[:, 2] = features.iloc[:, 2].apply(lambda x: '{:,}'.format(x))
                 
@@ -245,7 +250,7 @@ class PimaReport :
         
         self.doc.append(NewPage())
 
-        table_format = 'l' * 4
+        table_format = 'p{0.1\linewidth}p{0.1\linewidth}p{0.12\linewidth}p{0.12\linewidth}p{0.12\linewidth}p{0.34\linewidth}'
         
         with self.doc.create(Section(self.analysis.mutation_title, numbering = False)) :
 
@@ -261,10 +266,10 @@ class PimaReport :
                     region_mutations.iloc[:, 1] = region_mutations.iloc[:, 1].apply(lambda x: '{:,}'.format(x))
                     
                     with self.doc.create(Tabular(table_format)) as table :
-                        table.add_row(('Reference contig', 'Position', 'Reference', 'Alternate'))
+                        table.add_row(('Reference contig', 'Position', 'Reference', 'Alternate', 'Drug', 'Note'))
                         table.add_hline()
                         for i in range(region_mutations.shape[0]) :
-                            table.add_row(region_mutations.iloc[i, [0,1,3,4]].values.tolist())
+                            table.add_row(region_mutations.iloc[i, [0,1,3,4,5,6]].values.tolist())
 
                             
     def add_amr_matrix(self) :
@@ -350,7 +355,7 @@ class PimaReport :
             plasmids.iloc[:, 4] = plasmids.iloc[:, 4].apply(lambda x: '{:,}'.format(x))
             plasmids.iloc[:, 5] = plasmids.iloc[:, 5].apply(lambda x: '{:,}'.format(x))
             
-            table_format = 'p{0.15\linewidth}p{0.3\linewidth}p{0.1\linewidth}p{0.08\linewidth}p{0.08\linewidth}p{0.08\linewidth}'
+            table_format = 'p{0.1\linewidth}p{0.3\linewidth}p{0.15\linewidth}p{0.08\linewidth}p{0.08\linewidth}p{0.08\linewidth}'
 
             with self.doc.create(Tabular(table_format)) as table :
                 table.add_row(('Genome contig', 'Plasmid hit', 'Plasmid acc.', 'Contig size', 'Aliged', 'Plasmid size'))
