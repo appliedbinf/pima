@@ -128,7 +128,6 @@ class Analysis :
         self.ont_watch_sleep_time = 10
         
         self.ont_fast5 = opts.ont_fast5
-        self.ont_fast5_limit = opts.ont_fast5_limit
         self.basecaller = opts.basecaller
         self.albacore_seq_files_file = opts.albacore_seq_file
         self.barcode_min_fraction = 2.5
@@ -152,6 +151,7 @@ class Analysis :
         # Assembly options
         self.assembler = opts.assembler
         self.genome_assembly_size = opts.genome_size
+        self.assembly_coverage = opts.assembly_coverage
         self.racon = opts.racon
         self.racon_rounds = opts.racon_rounds
         self.no_medaka = opts.no_medaka
@@ -166,6 +166,7 @@ class Analysis :
         self.pilon_coverage_min = 25
         self.will_have_ont_assembly = False
         self.contig_info = None
+        self.only_assemble = opts.only_assemble
         self.no_assembly = opts.no_assembly
         
         # The assembly itself
@@ -423,7 +424,7 @@ class Analysis :
                                 '-O', database_fasta,
                                 'http://pima.appliedbinf.com/data/' + database + '.fasta'])
             self.print_and_run(command)
-                           
+            
             
     def bwa_index_fasta(self, fasta) :
         
@@ -444,7 +445,7 @@ class Analysis :
         self.print_and_run(command)
 
         # Check that the index was built
-        self.validate_file_and_size_or_error(bwa_index, 'BWA index', 'doesn\'t', 'is empty')
+        self.validate_file_and_size_or_error(bwa_index, 'BWA index', 'doesn\'t exist', 'is empty')
         
             
     def bwa_short_illumina_fastq(self, genome, fastq, bam) :
@@ -570,6 +571,14 @@ class Analysis :
             function(self)
         return wrapper
 
+    
+    def unless_only_assemble(function) :
+        def wrapper(self) :
+            if self.only_assemble :
+                return
+            function(self)
+        return wrapper
+    
 
     def unless_no_assembly(function) :
         def wrapper(self) :
@@ -641,12 +650,6 @@ class Analysis :
         if not in_subdirs and not in_maindir :
             self.errors += ['Could not find FAST5 files in ' + self.ont_fast5 + ' or subdirectories']
 
-        if not self.ont_fast5_limit is None:
-            if self.ont_fast5_limit <= 0 :
-                self.errors += ['FAST5 limit must be greater than 0.  Got ' + str(self.ont_fast5_limie)]
-            if self.ont_fast5 is None :
-                self.errors += ['FAST5 limit must be accompanied by FAST5 data.']
-                
 
     def validate_ont_fastq(self):
     
@@ -755,29 +758,33 @@ class Analysis :
 
         self.analysis += ['lorma_ont_fastq']
 
-        
-    @unless_only_basecall
-    @unless_given_genome
-    @unless_no_assembly
-    def validate_miniasm(self) :
-    
-        if self.assembler != 'miniasm' :
-            return
-        
-        if not self.ont_fast5 and not self.ont_fastq :
-            self.errors += ['Miniasm assembly requires --ont-fast5 and/or --ont-fastq']
-        
-        self.print_and_log('Validating miniasm utilities', self.main_process_verbosity, self.main_process_color)
-        
-        for utility in ['minimap2', 'miniasm'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required by --assembler miniasm)')
 
-        self.will_have_ont_assembly = True
-        self.will_have_genome_fasta = True
-                
-        self.analysis += ['miniasm_ont_fastq']
-        self.racon = True
-                
+    @unless_only_basecall
+    @unless_no_assembly
+    def validate_assembly_coverage(self) :
+        #TODO make these not magic numbers
+        if self.assembly_coverage > 300 or self.assembly_coverage < 50 :
+            self.errors += ['--assembly-coverage (' + str(self.assembly_coverage) + ') is outside of useful range (50 < x <300)']
+
+
+    @unless_only_basecall
+    @unless_no_assembly
+    def validate_genome_assembly_size(self) :
+
+        self.print_and_log('Validating assembly size', self.main_process_verbosity, self.main_process_color)
+        
+        if not re.match('[0-9]+(\\.[0-9]+)?[mkgMKG]', self.genome_assembly_size) :
+            self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_assembly_size)]
+        else :
+            power = 0
+            if re.match('[0-9]+(\\.[0-9]+)?[kK]', self.genome_assembly_size) :
+                power = 3
+            if re.match('[0-9]+(\\.[0-9]+)?[mM]', self.genome_assembly_size) :
+                power = 6
+            if re.match('[0-9]+(\\.[0-9]+)?[gG]', self.genome_assembly_size) :
+                power = 9
+            self.genome_assembly_raw_size = float(re.sub('[mkgMKG]', '', self.genome_assembly_size)) * 10**power
+            
         
     @unless_only_basecall
     @unless_given_genome
@@ -794,9 +801,7 @@ class Analysis :
         
         if not self.genome_assembly_size :
             self.errors += ['wtdbg2 requires --genome-size']
-        elif not re.match('[0-9]+(\\.[0-9]+)?[mkMK]', self.genome_assembly_size) :
-            self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_assembly_size)]
-        
+            
         for utility in ['pgzf', 'kbm2', 'wtdbg2', 'wtpoa-cns', 'wtdbg-cns'] :
                 self.validate_utility(utility, utility + ' is not on the PATH (required by --assembler wtdbg2)')
 
@@ -879,6 +884,7 @@ class Analysis :
 
         # Assume this means we have an ONT assembly
         self.will_have_ont_assembly = True
+
         
     @unless_only_basecall
     @unless_no_assembly
@@ -945,6 +951,8 @@ class Analysis :
         if not (self.will_have_genome_fasta and self.illumina_fastq) :
             return
 
+        self.print_and_log('Validating Pilon and memory arguments', self.main_process_verbosity, self.main_process_color)
+
         # TODO - Find bwa version if we are dealing with shorte reads
         for utility in ['minimap2', 'pilon'] :
             if self.validate_utility(utility, utility + ' is not on the PATH (required by --illumina-fastq).') :
@@ -999,6 +1007,7 @@ class Analysis :
             
             
     @unless_only_basecall
+    @unless_only_assemble
     def validate_features(self) :
 
         if self.feature_fastas is None :
@@ -1036,6 +1045,7 @@ class Analysis :
 
 
     @unless_only_basecall
+    @unless_only_assemble
     def validate_blast(self) :
 
         if len(self.feature_fastas) == 0 :
@@ -1055,6 +1065,7 @@ class Analysis :
 
         
     @unless_only_basecall
+    @unless_only_assemble
     def validate_reference(self) :
 
         if not (self.organism or self.reference_fasta) :
@@ -1096,7 +1107,8 @@ class Analysis :
                 self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
 
         
-    @unless_only_basecall        
+    @unless_only_basecall
+    @unless_only_assemble
     def validate_mutations(self) :
 
         if not (self.organism or self.mutation_region_bed) :
@@ -1156,6 +1168,7 @@ class Analysis :
 
             
     @unless_only_basecall
+    @unless_only_assemble
     def validate_draw_amr_matrix(self) :
 
         # Really just making this a method for consistency
@@ -1163,6 +1176,7 @@ class Analysis :
 
         
     @unless_only_basecall
+    @unless_only_assemble
     def validate_plasmids(self) :
 
         if not self.plasmids :
@@ -1187,9 +1201,10 @@ class Analysis :
             self.errors += ['Can\'t call plasmids without a genome or an assembly']
 
         self.analysis = self.analysis + ['call_plasmids']
+
         
-    
     @unless_only_basecall
+    @unless_only_assemble
     def validate_draw_features(self) :
         
         if self.no_drawing :
@@ -1247,8 +1262,9 @@ class Analysis :
         self.validate_lorma()
         
         self.validate_genome_fasta()
-        
-        self.validate_miniasm()
+
+        self.validate_assembly_coverage()
+        self.validate_genome_assembly_size()
         self.validate_wtdbg2()
         self.validate_flye()
         self.validate_racon()
@@ -1555,18 +1571,60 @@ class Analysis :
         opener = 'cat'
         if (re.search('\.(gz|gzip)$', self.ont_fastq)) :
             opener = 'gunzip -c'
+            
         command = ' '.join([opener,
                             self.ont_fastq,
                             '| awk \'{getline;print length($0);s += length($1);getline;getline;}END{print "+"s}\'',
                             '| sort -gr',
-                            '| awk \'BEGIN{bp = 0;f = 0}{if(NR == 1){sub("+", "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}END{print n50"\t"NR"\t"s;exit}\''])
-        self.ont_n50, self.ont_read_count, self.ont_bases = [int(i) for i in re.split('\\t', self.print_and_run(command)[0])]
-        self.ont_bases = format_kmg(self.ont_bases, decimals = 1)
+                            '| awk \'BEGIN{bp = 0;f = 0}',
+                            '{if(NR == 1){sub("+", "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
+                            'END{print n50"\t"NR"\t"s;exit}\''])
+        self.ont_n50, self.ont_read_count, self.ont_raw_bases = [int(i) for i in re.split('\\t', self.print_and_run(command)[0])]
+        self.ont_bases = format_kmg(self.ont_raw_bases, decimals = 1)
 
         if self.ont_n50 <= self.ont_n50_min :
             warning = 'ONT N50 (' + str(self.ont_n50) + ') is less than the recommended minimum (' + str(self.ont_n50_min) + ').'
             self.add_warning(warning)
-            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+            self.report[self.assembly_title][self.assembly_notes_title] = \
+                self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+
+        # See if we sould downsample the ONT FASTQ file
+        present_coverage = self.ont_raw_bases / self.genome_assembly_raw_size
+        if present_coverage >= self.assembly_coverage + 1 :
+            self.downsample_ont_fastq()
+
+            
+    def downsample_ont_fastq(self) :
+
+        self.print_and_log(' '.join(['Downsampling to', str(self.assembly_coverage) + 'X', 'coverage']),
+                           self.sub_process_verbosity, self.sub_process_color)
+
+        self.downsample_dir = os.path.join(self.output_dir, 'downsample')
+        os.makedirs(self.downsample_dir)
+        self.make_start_file(self.downsample_dir)
+        
+        desired_bases = int(self.genome_assembly_raw_size * self.assembly_coverage)
+        
+        read_length_tsv = os.path.join(self.downsample_dir, 'read_sizes.tsv')
+        command = ' '.join(['cat', self.ont_fastq,
+                            '| awk \'{printf $1"\t";getline;print length($1);getline;getline}\'',
+                            '| sort -k 2gr',
+                            '| awk \'BEGIN{bp = 0}{bp += $2;print; if (bp >= ', str(desired_bases), '){exit}}\'',
+                            '>', read_length_tsv])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(read_length_tsv, 'Read length index', 'doesn\'t exist', 'is empty')
+
+        downsampled_fastq = os.path.join(self.downsample_dir, 'downsampled.fastq')
+        command = ' '.join(['cat', self.ont_fastq,
+                            '| awk \'BEGIN{while(getline < "' + read_length_tsv + '"){l[$1] = 1}}',
+                            '{if($1 in l){print;getline;print;getline;print;getline;print}}\'',
+                            '>', downsampled_fastq])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(downsampled_fastq, 'Downsampled FASTQ', 'doesn\'t exist', 'is empty')
+
+        # Keep this new FASTQ
+        self.ont_fastq = downsampled_fastq
+
 
 
     def illumina_fastq_info(self) :
@@ -1736,8 +1794,7 @@ class Analysis :
                             '--plasmid',
                             raw_or_corrected, self.ont_fastq,
                             '--meta',
-                            '--asm-coverage 75',
-                            '--genome-size', self.genome_assembly_size,
+                            '--keep-haplotypes',
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
                             '1>', flye_stdout, '2>', flye_stderr])
@@ -1751,7 +1808,7 @@ class Analysis :
         # Pull in the assembly summary and look at the coverage
         assembly_info_txt = os.path.join(self.ont_assembly_dir, 'assembly_info.txt')
         assembly_info = pandas.read_csv(assembly_info_txt, header = 0, index_col = 0, sep = '\t')
-        
+
         method = 'ONT reads were assembled using Flye (v ' + self.versions['flye'] + ').'
         self.report[self.methods_title][self.assembly_methods] = \
             self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
@@ -1830,6 +1887,10 @@ class Analysis :
         self.medaka_dir = os.path.join(self.output_dir, 'medaka')
         os.makedirs(self.medaka_dir)
         self.make_start_file(self.medaka_dir)
+
+        # See if we need to downsample the reads
+        #if self.medaka_downsample_reads :
+            
         
         # Actually run Medaka
         self.print_and_log('Starting medaka', self.sub_process_verbosity, self.sub_process_color)
@@ -3057,28 +3118,25 @@ if __name__ == '__main__':
                         help = 'Maximum to to wait between new FAST5 files')
     input_group.add_argument('--ont-fast5', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory containing ONT FAST5 files')
-    input_group.add_argument('--ont-fast5-limit', required = False, type = int, default = None, metavar = '<DIR_COUNT>',
-                        help = 'Limit on the number of FAST5 directories to include in the analysis (default : all dirs)')
-    input_group.add_argument('--basecaller', required = False, default = 'guppy', choices = ['guppy', 'albacore'],
+    input_group.add_argument('--basecaller', required = False, default = 'guppy', choices = ['guppy'],
                         help = 'The basecaller for ONT FAST5 data (default : %(default)s)')
     input_group.add_argument('--ont-fastq', required = False, default = None, metavar = '<FASTQ|GZ>',
                         help = 'File containing basecalled ONT reads')
     input_group.add_argument('--multiplexed', required = False, default = False, action = 'store_true',
                         help = 'The ONT data are multiplexed (default : %(default)s)')
-    input_group.add_argument('--demux', required = False, default = 'qcat', choices = ['qcat', 'porechop'],
+    input_group.add_argument('--demux', required = False, default = 'qcat', choices = ['qcat'],
                         help = 'Demultiplexer/trimmer to use (default : %(default)s)')
     input_group.add_argument('--error-correct', required = False, default = False, action = 'store_true',
                         help = 'Use LORMA to  error-correct ONT reads (default : %(default)s)')
     input_group.add_argument('--only-basecall', required = False, default = False, action = 'store_true',
                         help = 'Just basecall and demultiplex/trim/correct.  No downstream analysis.')
     
-    input_group.add_argument('--illumina-fastq', required = False, default = None, nargs = '+', metavar = '<FASTQ|GZ>',
+    input_group.add_argument('--illumina-fastq', required = False, default = None, nargs = '+', metavar = '<R1> [R2]',
                         help = 'Files containing R1 & R2 Illumina reads')
 
     input_group.add_argument('--genome', required = False, default = None, metavar = '<GENOME_FASTA>',
                         help = 'A genome FASTA file to be used in place of assembly')
 
-    
     output_group = parser.add_argument_group('Output options')
     output_group.add_argument('--output', required = False, default = None, metavar = '<OUTPUT_DIR>',
                         help = 'Output directory for the analysis')
@@ -3089,10 +3147,12 @@ if __name__ == '__main__':
     # Assembly options
     assembly_group = parser.add_argument_group('Assembly options')
     assembly_group.add_argument('--assembler', required = False, default = 'flye', type = str,
-                        choices = ['miniasm', 'wtdbg2', 'flye'],
+                        choices = ['wtdbg2', 'flye'],
                         help = 'Assembler to use (default : %(default)s)')
     assembly_group.add_argument('--genome-size', required = False, default = None, type = str, metavar = '<GENOME_SIZE>',
-                        help = 'Genome size estimate for Flye (default : %(default)s))')
+                        help = 'Genome size estimate for the assembly & downsampling (default : %(default)s))')
+    assembly_group.add_argument('--assembly-coverage', required = False, default = 150, type = int, metavar = '<X>',
+                        help = 'Downsample the provided reads to this coverage (default : %(default)sX)')
     assembly_group.add_argument('--racon', required = False, default = False, action = 'store_true',
                         help = 'Force the generation a racon consenus (default : %(default)s)')
     assembly_group.add_argument('--racon-rounds', required = False, default = 4, type = int, metavar = '<NUM_ROUNDS>',
@@ -3107,10 +3167,12 @@ if __name__ == '__main__':
                         help = 'List of albacore sequencing summary files for nanopolish (default : %(default)s)')
     assembly_group.add_argument('--pilon', required = False, default = False, action = 'store_true',
                         help = 'Run Pilon if Illumina reads are given (default : %(default)s)')
+    assembly_group.add_argument('--only-assemble', required = False, default = False, action = 'store_true',
+                        help = 'Only carry out assembly steps with the given data; no downstream analysis.')
     assembly_group.add_argument('--no-assembly', required = False, default = False, action = 'store_true',
                         help = 'Don\'t attempt to assembly/polish a given genome/set of reads (default : %(default)s)')
 
-
+    
     # Database/download options
     download_group = parser.add_argument_group('Database downloading arguments')
     download_group.add_argument('--download', required = False, default = False, action = 'store_true',
@@ -3173,7 +3235,7 @@ if __name__ == '__main__':
     other_group.add_argument('--threads', required = False, type=int, default = 1, metavar = '<NUM_THREADS>',
                         help = 'Number of worker threads to use (default : %(default)s)')
     other_group.add_argument('--verbosity', required = False, type=int, default = 1, metavar = '<INT>',
-                        help = 'How much information to print as PIMA runs (default : %(default)s)')
+                        help = 'How much information to print as PiMA runs (default : %(default)s)')
     other_group.add_argument('--bundle', required = False, type=str, default = None, metavar = '<PATH>',
                         help = 'Local Tectonic bundle (default : %(default)s)')
     other_group.add_argument('--fake-run', required = False, default = False, action = 'store_true',
