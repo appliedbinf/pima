@@ -771,6 +771,9 @@ class Analysis :
     @unless_no_assembly
     def validate_genome_assembly_size(self) :
 
+        if self.genome_assembly_size is None :
+            return
+        
         self.print_and_log('Validating assembly size', self.main_process_verbosity, self.main_process_color)
         
         if not re.match('[0-9]+(\\.[0-9]+)?[mkgMKG]', self.genome_assembly_size) :
@@ -2149,6 +2152,8 @@ class Analysis :
         if len(self.illumina_fastq) == 1 :
             bam_option = '--unpaired'
         command = ' '.join(['pilon',
+                            '-Xmx2g',
+                            '-Xms2g',
                             '--genome', self.genome_fasta,
                             bam_option, pilon_bam,
                             '--output', pilon_prefix,
