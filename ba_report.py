@@ -104,13 +104,12 @@ class PimaReport :
                         table.add_row(('ONT bases', '{:s}'.format(self.analysis.ont_bases)))
                     self.doc.append(VerticalSpace("10pt"))
 
+            methods = []
             if self.analysis.did_guppy_ont_fast5 :
-                method = 'ONT reads were basecalled using guppy (v ' + self.analysis.versions['guppy'] + ').'
-                self.methods = self.methods.append(pd.Series(method))
-
+                methods += ['ONT reads were basecalled using guppy (v ' + self.analysis.versions['guppy'] + ').']
             if self.analysis.did_qcat_ont_fastq :
-                method = 'ONT reads were demultiplexed and trimmed using qcat (v ' + self.analysis.versions['qcat'] + ').'
-                self.methods = self.methods.append(pd.Series(method))
+                methods += ['ONT reads were demultiplexed and trimmed using qcat (v ' + self.analysis.versions['qcat'] + ').']
+            self.methods[self.basecalling_methods_title] = pd.Series(methods)
 
             if not (self.analysis.illumina_length_mean is None ):
                 with self.doc.create(Subsection('Illumina library statistics', numbering = False)) :
@@ -135,7 +134,7 @@ class PimaReport :
 
                 if self.analysis.did_flye_ont_fastq :
                     method = 'ONT reads were assembled using Flye (v ' + self.analysis.versions['flye'] + ').'
-                    self.methods = self.methods.append(pd.Series(method))
+                    self.methods[self.assembly_methods_title] = self.methods[self.assembly_methods_title].append(pd.Series(method))
 
 
             if len(self.analysis.assembly_notes) > 0 :
@@ -353,7 +352,7 @@ class PimaReport :
 
         method = ' '.join(['Mutations were identified using'
                            'samtools mpileup (v', self.analysis.versions['samtools'],  ')',
-                           'and bcftools (v', self.analysis.versions['bcftools'], ').'])
+                           'and varscan (v', self.analysis.versions['varscan'], ').'])
         self.methods[self.mutation_methods_title] = self.methods[self.mutation_methods_title].append(pd.Series(method))
 
                             
@@ -452,6 +451,8 @@ class PimaReport :
 
     def add_methods(self) :
 
+        print(self.methods)
+        
         if len(self.methods) == 0 :
             return
         
@@ -459,6 +460,8 @@ class PimaReport :
 
         with self.doc.create(Section(self.methods_title, numbering = False)) :
 
+            print(self.methods)
+            
             for methods_section in self.methods.index.tolist() :
 
                 if len(self.methods[methods_section]) == 0 :
