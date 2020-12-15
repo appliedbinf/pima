@@ -44,7 +44,8 @@ inc_database_default = f"{pima_path}/data/inc.fasta"
 inc_default_color = '#0570B0'
 included_databases = [amr_database_default, inc_database_default]
 
-plasmid_database_default = f"{pima_path}/data/plasmids_and_vectors.fasta"
+plasmid_database_default_fasta = f"{pima_path}/data/plasmids_and_vectors.fasta"
+kraken_database_default = f"{pima_path}/data/kraken2"
 reference_dir_default = f"{pima_path}/reference_sequences"
 
 
@@ -421,14 +422,24 @@ class Analysis :
 
         self.print_and_log('Downloading missing databases', self.main_process_verbosity, self.main_process_color)
 
-        databases = ['plasmids_and_vectors']
-        for database in databases :
-            database_fasta = os.path.join(data_dir, database + '.fasta')
-            if self.validate_file_and_size(database_fasta) :
-                continue
+        database_fasta = plasmid_database_default_fasta
+        if not self.validate_file_and_size(database_fasta) :
+            self.print_and_log('Downloading plasmid database', self.sub_process_verbosity, self.sub_process_color)
             command = ' '.join(['wget',
                                 '-O', database_fasta,
                                 'http://pima.appliedbinf.com/data/' + database + '.fasta'])
+            self.print_and_run(command)
+
+        if not os.path.isdir(kraken_database_default) :
+            self.print_and_log('Downloading and building kraken2 database (may take some time)', self.sub_process_verbosity, self.sub_process_color)
+            kraken_stdout, kraken_stderr = self.std_files(kraken_database_default)
+            command = ' '.join(['kraken2-build',
+                                '--standard',
+                                '--use-ftp',
+                                '--threads', str(self.threads),
+                                '--db', kraken_database_default,
+                                '1>' + kraken_stdout, '2>' + kraken_stderr])
+            print(self.verbosity)
             self.print_and_run(command)
             
             
@@ -1194,12 +1205,16 @@ class Analysis :
         if (self.ont_fast5 or self.ont_fastq or self.illumina_fastq) :
             self.analysis = self.analysis + ['call_amr_mutations']
             
-        for utility in ['minimap2', 'samtools', 'bcftools'] :
+        for utility in ['minimap2', 'samtools'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
 
             command = utility + ' --version'
             self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
 
+        self.validate_utility('varscan', 'varscan is not on the PATH (required for AMR mutations)')
+        command = 'varscan 2>&1 | head -1'
+        self.versions['varscan'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
+                    
             
     @unless_only_basecall
     @unless_only_assemble
@@ -1783,7 +1798,6 @@ class Analysis :
 
         self.ont_fastq = lorma_fastq
 
-
         
     def wtdbg2_ont_fastq(self) :
 
@@ -1851,6 +1865,7 @@ class Analysis :
                             raw_or_corrected, self.ont_fastq,
                             '--meta',
                             '--keep-haplotypes',
+                            '--genome-size', self.genome_assembly_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
                             '1>', flye_stdout, '2>', flye_stderr])
@@ -1878,6 +1893,7 @@ class Analysis :
         self.make_finish_file(self.ont_assembly_dir)
 
         self.did_flye_ont_fastq = True
+
         
     def racon_ont_assembly(self) :
 
@@ -1946,7 +1962,7 @@ class Analysis :
         os.makedirs(self.medaka_dir)
         self.make_start_file(self.medaka_dir)
 
-        # See if we need to downsample the reads
+        # TODO See if we need to downsample the reads
         #if self.medaka_downsample_reads :
             
         
@@ -2507,7 +2523,7 @@ class Analysis :
             warning = 'Fraction of the reference alignment ({:.2f}%) is less than {:.2f}%'.\
                 format(self.reference_aligned_fraction, self.reference_alignment_min)
             self.add_warning(warning)
-            self.alignment_notes = self.alignment_notesself.append(pd.Series(warning))
+            self.alignment_notes = self.alignment_notes.append(pd.Series(warning))
 
         # Pull out the aligned regions of the two genomes
         self.print_and_log('Finding reference and query specific insertions', self.sub_process_verbosity, self.sub_process_color)
@@ -2738,16 +2754,23 @@ class Analysis :
         else :
             self.minimap_ont_fastq(self.reference_fasta, self.ont_fastq, self.reference_mapping_bam)
             kind_of_reads = 'ONT'
-        self.index_bam(self.reference_mapping_bam)
-
+        
         self.mutations_read_type = kind_of_reads
 
-        # Pull out each region, one at a time
-        region_data = self.mutation_regions
+        # Make an mpileup file out of the reads
+        reference_mapping_mpileup = os.path.join(self.mutations_dir, 'reference_mapping.mpileup')
+        self.mpileup_bam(self.reference_mapping_bam, reference_mapping_mpileup)
 
-        for region_i in range(region_data.shape[0]) :
+        # Now call and filter variants with Varscan and filter
+        varscan_raw_prefix = os.path.join(self.mutations_dir, 'varscan_raw')
+        self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix)
+        varscan_prefix = os.path.join(self.mutations_dir, 'varscan')
+        self.filter_varscan(varscan_raw_prefix, varscan_prefix)
+        self.varscan_vcf = self.vcf_varscan(varscan_prefix)
 
-            region  = region_data.iloc[region_i, :]
+        for region_i in range(self.mutation_regions.shape[0]) :
+
+            region  = self.mutation_regions.iloc[region_i, :]
 
             if not region['type'] in ['snp', 'small-indel', 'any'] :
                 continue
@@ -2758,66 +2781,23 @@ class Analysis :
             os.mkdir(region_dir)
 
             region_bed = os.path.join(region_dir, 'region.bed')
-            region_data.loc[[region_i], ].to_csv(path_or_buf = region_bed, sep = '\t', header = False, index = False)
+            self.mutation_regions.loc[[region_i], ].to_csv(path_or_buf = region_bed, sep = '\t', header = False, index = False)
 
-            region_bam = os.path.join(region_dir, 'region.bam')
-            stderr_file = os.path.join(region_dir, 'samtools_view.stderr')
-            command = ' '.join(['samtools view',
-                                '-L', region_bed,
-                                '-b', self.reference_mapping_bam,
-                                '1>' + region_bam,
-                                '2>' + stderr_file])
+            region_mutations_tsv = os.path.join(region_dir, 'region_mutations.tsv')
+            command = ' '.join(['bedtools intersect',
+                                '-nonamecheck',
+                                '-wb',
+                                '-a', region_bed,
+                                '-b', self.varscan_vcf,
+                                ' | awk \'BEGIN{getline < "' + self.mutation_region_bed + '";printf $0"\\t";',
+                                'getline < "' + self.varscan_vcf + '"; getline < "' + self.varscan_vcf + '";print $0}{print}\'',
+                                '1>' + region_mutations_tsv])
             self.print_and_run(command)
-            self.validate_file_and_size_or_error(region_bam, 'Region SAM file', 'cannot be found', 'is empty')
 
-            self.index_bam(region_bam)
-            
-            region_pileup = os.path.join(region_dir, 'region.mpileup')
-            stderr_file = os.path.join(region_dir, 'samtools_index.stderr')
-            command = ' '.join(['samtools mpileup',
-                                '-g',
-                                '-B',
-                                '-l', region_bed,
-                                '-f', self.reference_fasta,
-                                region_bam,
-                                '1>' + region_pileup,
-                                '2>' + stderr_file])
-            self.print_and_run(command)
-            self.validate_file_and_size_or_error(region_pileup, 'Region MPILEUP file', 'cannot be found', 'is empty')
-
-            region_text_pileup = os.path.join(region_dir, 'region.pileup')
-            stderr_file = os.path.join(region_dir, 'samtools_index.stderr')
-            command = ' '.join(['samtools mpileup',
-                                '-B',
-                                '-l', region_bed,
-                                '-f', self.reference_fasta,
-                                region_bam,
-                                '1>' + region_text_pileup,
-                                '2>' + stderr_file])
-            self.print_and_run(command)
-            self.validate_file_and_size_or_error(region_text_pileup, \
-                                                 'Region plain text MPILEUP file', 'cannot be found', 'is empty')
-            
-            # Call the actual SNPs
-            region_vcf = os.path.join(region_dir, 'region.vcf')
-            stderr_file = os.path.join(region_dir, 'bcftools.stderr')
-            mutation_types = 'snps,indels'
-            if kind_of_reads == 'ONT' :
-                mutation_types = 'snps'
-            command = ' '.join(['bcftools call',
-                                '--ploidy 1',
-                                '-c', region_pileup,
-                                '| bcftools view -v ' + mutation_types,
-                                '2>' + stderr_file,
-                                '| sed \'/##/d\'',
-                                '>', region_vcf])
-            self.print_and_run(command)
-            self.validate_file_and_size_or_error(region_vcf, 'Region VCF file', 'cannot be found', 'is empty')
-
-            region_mutations = pd.read_csv(filepath_or_buffer = region_vcf, sep = '\t', header = 0)
-            region_mutations = pd.concat([region_mutations,
-                                              pd.DataFrame(numpy.repeat(region['name'],
-                                                                            region_mutations.shape[0]))], axis = 1)
+            try :
+                region_mutations = pd.read_csv(region_mutations_tsv, sep = '\t', header = 0, index_col = False)
+            except :
+                region_mutations = pd.DataFrame()
 
             if region_mutations.shape[0] == 0 :
                 continue
@@ -2839,13 +2819,111 @@ class Analysis :
             # Keep track of mutations for reporting
             self.report[self.mutation_title][region['name']] = region_mutations
 
-        method = ' '.join(['Mutations were identified using'
-                           'samtools mpileup (v', self.versions['samtools'],  ')',
-                           'and bcftools (v', self.versions['bcftools'], ').'])
-        self.report[self.methods_title][self.mutation_methods] = \
-            self.report[self.methods_title][self.mutation_methods].append(pd.Series(method))
-
         self.make_finish_file(self.mutations_dir)
+        
+
+    def mpileup_bam(self, bam, mpileup) :
+
+        self.print_and_log('Making mpileup from BAM', self.sub_process_verbosity, self.sub_process_color)
+        
+        mpileup_stdout, mpileup_stderr = self.std_files(os.path.join(self.mutations_dir, 'mpileup'))
+        command = ' '.join(['samtools mpileup',
+                            '-B',
+                            '-f', self.reference_fasta,
+                            '-o' + mpileup,
+                            bam,
+                            '1>' + mpileup_stdout, '2>' + mpileup_stderr])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(mpileup, 'Region MPILEUP file', 'cannot be found', 'is empty')
+                
+        
+    def varscan_mpileup(self, mpileup, prefix) :
+
+        ## TODO - Merge these blocks?
+        self.print_and_log('Calling SNPs with varscan', self.sub_process_verbosity, self.sub_process_color)
+        varscan_snp = prefix + '.snp'
+        snp_stderr = prefix + '_snp.stderr'
+        command = ' '.join(['varscan',
+                            'pileup2snp',
+                            mpileup,
+                            '-p-value 0.01',
+                            '--min-coverage 30',
+                            '--min-var-freq .8',
+                            '--variants',
+                            '1>' + varscan_snp, '2>' + snp_stderr])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(varscan_snp, 'Varscan SNP file', 'cannot be found', 'is empty')
+                            
+        self.print_and_log('Calling indels with varscan', self.sub_process_verbosity, self.sub_process_color)
+        varscan_indel = prefix + '.indel'
+        indel_stderr = prefix + '_indel.stderr'
+        command = ' '.join(['varscan',
+                            'pileup2indel',
+                            mpileup,
+                            '-p-value 0.01',
+                            '--min-coverage 30',
+                            '--min-var-freq .333',
+                            '--variants',
+                            '1>' + varscan_indel, '2>' + snp_stderr])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(varscan_indel, 'Varscan indel file', 'cannot be found', 'is empty')
+
+
+    def filter_varscan(self, in_prefix, out_prefix) :
+        
+        ## TODO - Merge these blocks?
+        self.print_and_log('Filtering Varscan SNP calls', self.sub_process_verbosity, self.sub_process_color)
+        varscan_raw_snp = in_prefix + '.snp'
+        varscan_snp = out_prefix + '.snp'
+        command = ' '.join(['cat', varscan_raw_snp,
+                            '| awk \'(NR > 1 && ($6 / ($5 + $6)) >= 2/10 && $9 == 2 && $5 + $6 >= 30)',
+                            '{f = $6 / ($5 + $6); gsub(/.*\//, "", $4);s = $4;gsub(/[+\-]/, "", s);$7 = sprintf("%.2f\%", f * 100);'
+                            'min = (8/10) / log(length(s) + 3) + 2/10;if(f > min){print}}\'',
+                            '1>' + varscan_snp])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(varscan_snp, 'Filtered Varscan SNP file', 'cannot be found', 'is empty')
+
+
+        self.print_and_log('Filtering Varscan indel calls', self.sub_process_verbosity, self.sub_process_color)
+        varscan_raw_indel = in_prefix + '.indel'
+        varscan_indel = out_prefix + '.indel'
+        command = ' '.join(['cat', varscan_raw_indel,
+                            '| awk \'(NR > 1 && ($6 / ($5 + $6)) >= 2/10 && $9 == 2 && $5 + $6 >= 30)',
+                            '{f = $6 / ($5 + $6); gsub(/.*\//, "", $4);s = $4;gsub(/[+\-]/, "", s);$7 = sprintf("%.2f\%", f * 100);'
+                            'min = (8/10) / log(length(s) + 3) + 2/10;if(f > min){print}}\'',
+                            '1>' + varscan_indel])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(varscan_indel, 'Filtered Varscan indel file', 'cannot be found', 'is empty')
+
+        
+    def vcf_varscan(self, varscan_prefix) :
+
+        self.print_and_log('Making VCF from varscan', self.sub_process_verbosity, self.sub_process_color)
+
+        varscan_snp, varscan_indel = [varscan_prefix + '.' + i for i in ['snp', 'indel']]
+        snp_vcf, indel_vcf = [varscan_prefix + '_' + i + '.vcf' for i in ['snp', 'indel']]
+        varscan_vcf = varscan_prefix + '.vcf'
+        self.print_and_log('Making SNP VCF', self.sub_process_verbosity, self.sub_process_color)
+        command = ' '.join(['cat', varscan_snp,
+                            '| awk \'(NR > 1){OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
+                            '1>' + snp_vcf])
+        self.print_and_run(command)
+        #self.validate_file_and_size_or_error(varscan_indel, 'Filtered Varscan indel file', 'cannot be found', 'is empty')
+
+        self.print_and_log('Making indel VCF', self.sub_process_verbosity, self.sub_process_color)
+        command = ' '.join(['cat', varscan_indel,
+                            '| awk \'(NR > 1){OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
+                            '1>' + indel_vcf])
+        self.print_and_run(command)
+
+        command = ' '.join(['cat', snp_vcf, indel_vcf,
+                            '| sort -k 1,1 -k 2n,2n',
+                            '| awk \'BEGIN{OFS = "\\t";print "##fileformat=VCFv4.2";',
+                            'print "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE"}{print}\'',
+                            '1>' + varscan_vcf])
+        self.print_and_run(command)
+        
+        return(varscan_vcf)
         
         
     def call_plasmids(self) :
@@ -3242,7 +3320,7 @@ if __name__ == '__main__':
                         help = 'Assembler to use (default : %(default)s)')
     assembly_group.add_argument('--genome-size', required = False, default = None, type = str, metavar = '<GENOME_SIZE>',
                         help = 'Genome size estimate for the assembly & downsampling (default : %(default)s))')
-    assembly_group.add_argument('--assembly-coverage', required = False, default = 150, type = int, metavar = '<X>',
+    assembly_group.add_argument('--assembly-coverage', required = False, default = 200, type = int, metavar = '<X>',
                         help = 'Downsample the provided reads to this coverage (default : %(default)sX)')
     assembly_group.add_argument('--racon', required = False, default = False, action = 'store_true',
                         help = 'Force the generation a racon consenus (default : %(default)s)')
@@ -3271,7 +3349,7 @@ if __name__ == '__main__':
     plasmid_group = parser.add_argument_group('Plasmid and vector search options')
     plasmid_group.add_argument('--plasmids', required = False, default = False, action = 'store_true', 
                         help = 'Do a plasmid search (default : %(default)s)')
-    plasmid_group.add_argument('--plasmid-database', required = False, default = plasmid_database_default, metavar = '<PLASMID_FASTA>', 
+    plasmid_group.add_argument('--plasmid-database', required = False, default = plasmid_database_default_fasta, metavar = '<PLASMID_FASTA>', 
                         help = 'Path to a FASTA file with reference plasmid sequences')
 
     
