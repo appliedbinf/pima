@@ -26,6 +26,7 @@ class PimaReport :
         self.doc = None
 
         self.methods = pd.Series()
+        self.summary_title = 'Summary'
         self.methods_title = 'Methods'
         self.basecalling_methods_title = 'Basecalling'
         self.contamination_methods_title = 'Contamination check'
@@ -38,6 +39,9 @@ class PimaReport :
         self.methods[self.mutation_methods_title] = pd.Series()
         self.feature_methods_title = 'Feature annotation'
         self.methods[self.feature_methods_title] = pd.Series()
+        self.plasmid_methods_title = 'Plasmid annotation'
+        self.methods[self.plasmid_methods_title] = pd.Series()
+
         
         self.basecalling_title = 'Basecalling'
         self.assembly_notes_title = 'Assembly notes'
@@ -59,7 +63,7 @@ class PimaReport :
         
     def add_header(self) :
 
-        header_text = 'Analysis of ' + self.report['name']
+        header_text = 'Analysis of ' + self.analysis.analysis_name
         
         header = PageStyle('header')
         with header.create(Head('L')) :
@@ -75,7 +79,7 @@ class PimaReport :
 
     def add_summary(self) :
 
-        with self.doc.create(Section(self.analysis.summary_title, numbering = False)) :
+        with self.doc.create(Section(self.summary_title, numbering = False)) :
 
             with self.doc.create(Subsection('CDC Advisory', numbering = False)) as subsection:
                 self.doc.append(cdc_advisory)
@@ -135,6 +139,11 @@ class PimaReport :
                 if self.analysis.did_flye_ont_fastq :
                     method = 'ONT reads were assembled using Flye (v ' + self.analysis.versions['flye'] + ').'
                     self.methods[self.assembly_methods_title] = self.methods[self.assembly_methods_title].append(pd.Series(method))
+                if self.analysis.did_medaka_ont_assembly :
+                    method = 'The genome assembly was polished using ONT reads and Medaka (v ' +\
+                        self.analysis.versions['medaka'] + ').'
+                    self.methods[self.assembly_methods_title] = self.methods[self.assembly_methods_title].append(pd.Series(method))
+
 
 
             if len(self.analysis.assembly_notes) > 0 :
@@ -411,7 +420,7 @@ class PimaReport :
                         table.add_hline()
                         for i in range(genome_indels.shape[0]) :
                             table.add_row(genome_indels.iloc[i,:].values.tolist())
-                            
+
         method = 'Large insertions or deletions were found as the complement of aligned ' + \
             'regions using bedtools (v ' + self.analysis.versions['bedtools'] + ').'
         self.methods[self.reference_methods_title] = self.methods[self.reference_methods_title].append(pd.Series(method))
@@ -419,14 +428,16 @@ class PimaReport :
                             
     def add_plasmids(self) :
 
-        if len(self.report[self.analysis.plasmid_title]) == 0 :
+        if not self.analysis.did_call_plasmids :
             return
-
+        
         # Make sure we looked for mutations
-        plasmids = self.report[self.analysis.plasmid_title].copy()
+        plasmids = self.analysis.plasmids
 
         if plasmids is None :
             return
+
+        plasmids = plasmids.copy()
         
         self.doc.append(NewPage())
 
@@ -447,12 +458,20 @@ class PimaReport :
                 table.add_hline()
                 for i in range(plasmids.shape[0]) :
                     table.add_row(plasmids.iloc[i, 0:6].values.tolist())
+                    
+        method = ' '.join(['The plasmid reference database was queried against the genome assembly using minimap2 (v',
+                           self.analysis.versions['minimap2'], ').'])
+        self.methods[self.plasmid_methods_title] = self.methods[self.plasmid_methods_title].append(pd.Series(method))
+        
+        method = 'The resulting SAM was converted to a PSL using a custom version of sam2psl.'
+        self.methods[self.plasmid_methods_title] = self.methods[self.plasmid_methods_title].append(pd.Series(method))
+
+        method = 'Plasmid-to-genome hits were resolved using the pChunks algorithm.'
+        self.methods[self.plasmid_methods_title]  = self.methods[self.plasmids_methods_title].append(pd.Series(method))
 
 
     def add_methods(self) :
 
-        print(self.methods)
-        
         if len(self.methods) == 0 :
             return
         
@@ -460,8 +479,6 @@ class PimaReport :
 
         with self.doc.create(Section(self.methods_title, numbering = False)) :
 
-            print(self.methods)
-            
             for methods_section in self.methods.index.tolist() :
 
                 if len(self.methods[methods_section]) == 0 :
