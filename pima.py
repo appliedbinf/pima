@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/usr/bin/env python
 
 import copy
 import csv
@@ -1798,6 +1798,7 @@ class Analysis :
                             raw_or_corrected, self.ont_fastq,
                             '--meta',
                             '--keep-haplotypes',
+                            '--genome-size', self.genome_assembly_size,
                             '--out-dir', flye_output_dir,
                             '--threads', str(self.threads),
                             '1>', flye_stdout, '2>', flye_stderr])
