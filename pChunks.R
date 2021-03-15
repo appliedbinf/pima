@@ -22,7 +22,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     maxTargetLength = 300000,
     minQueryLength = 500,
     makeCircos = FALSE,
-    minQueryCoverage = 1/10, minTargetCoverage = 1/10,
+    minQueryCoverage = 1/2, minTargetCoverage = 1/2,
     searchDepth = NULL,
     verbosity = 0) {
 
@@ -542,7 +542,7 @@ pChunks = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     maxTargetLength = 300000,
     minQueryLength = 200,
     makeCircos = FALSE,
-    minQueryCoverage = 1/10, minTargetCoverage = 1/50,
+    minQueryCoverage = 1/2, minTargetCoverage = 1/2,
     searchDepth = c(1),
     threads = 1,
     verbosity = 2) {
@@ -601,7 +601,7 @@ pChunks = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
                                             maxTargetLength = 300000,
                                             minQueryLength = 200,
                                             makeCircos = makeCircos,
-                                            minQueryCoverage = 1/10, minTargetCoverage = 1/10,
+                                            minQueryCoverage = 1/2, minTargetCoverage = 1/2,
                                             searchDepth = searchDepths[i,],  ## Search depth i
                                             verbosity = verbosity)
                            },

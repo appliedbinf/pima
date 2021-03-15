@@ -1,6 +1,4 @@
-
-
-import pandas
+import pandas as pd
 from si_prefix import si_format
 
 from pylatex import Document, Section, \
@@ -27,6 +25,34 @@ class PimaReport :
         self.report = analysis.report
         self.doc = None
 
+        self.methods = pd.Series()
+        self.summary_title = 'Summary'
+        self.methods_title = 'Methods'
+        self.basecalling_methods_title = 'Basecalling'
+        self.contamination_methods_title = 'Contamination check'
+        self.methods[self.contamination_methods_title] = pd.Series()
+        self.assembly_methods_title = 'Assembly'
+        self.methods[self.assembly_methods_title] = pd.Series()
+        self.reference_methods_title = 'Reference comparison'
+        self.methods[self.reference_methods_title] = pd.Series()
+        self.mutation_methods_title = 'Mutation screening'
+        self.methods[self.mutation_methods_title] = pd.Series()
+        self.feature_methods_title = 'Feature annotation'
+        self.methods[self.feature_methods_title] = pd.Series()
+        self.plasmid_methods_title = 'Plasmid annotation'
+        self.methods[self.plasmid_methods_title] = pd.Series()
+
+        
+        self.basecalling_title = 'Basecalling'
+        self.assembly_notes_title = 'Assembly notes'
+        self.alignment_title = 'Comparison with reference'
+        self.alignment_notes_title = 'Alignment notes'
+        self.contig_alignment_title = 'Alignment vs. reference contigs'
+        self.large_indel_title = 'Large insertions & deletions'
+        self.snp_indel_title = 'SNPs and small indels'
+        self.feature_title = 'Features found in the assembly'
+        self.feature_plot_title = 'Feature annotation plots'
+
         
     def start_doc(self) :
 
@@ -37,7 +63,7 @@ class PimaReport :
         
     def add_header(self) :
 
-        header_text = 'Analysis of ' + self.report['name']
+        header_text = 'Analysis of ' + self.analysis.analysis_name
         
         header = PageStyle('header')
         with header.create(Head('L')) :
@@ -53,7 +79,7 @@ class PimaReport :
 
     def add_summary(self) :
 
-        with self.doc.create(Section(self.analysis.summary_title, numbering = False)) :
+        with self.doc.create(Section(self.summary_title, numbering = False)) :
 
             with self.doc.create(Subsection('CDC Advisory', numbering = False)) as subsection:
                 self.doc.append(cdc_advisory)
@@ -82,6 +108,13 @@ class PimaReport :
                         table.add_row(('ONT bases', '{:s}'.format(self.analysis.ont_bases)))
                     self.doc.append(VerticalSpace("10pt"))
 
+            methods = []
+            if self.analysis.did_guppy_ont_fast5 :
+                methods += ['ONT reads were basecalled using guppy (v ' + self.analysis.versions['guppy'] + ').']
+            if self.analysis.did_qcat_ont_fastq :
+                methods += ['ONT reads were demultiplexed and trimmed using qcat (v ' + self.analysis.versions['qcat'] + ').']
+            self.methods[self.basecalling_methods_title] = pd.Series(methods)
+
             if not (self.analysis.illumina_length_mean is None ):
                 with self.doc.create(Subsection('Illumina library statistics', numbering = False)) :
                     with self.doc.create(Tabular('ll', width = 2)) as table :
@@ -103,15 +136,24 @@ class PimaReport :
 
                     self.doc.append(VerticalSpace("10pt"))
 
-            if len(self.report[self.analysis.assembly_title]) > 0 :
-                if len(self.report[self.analysis.assembly_title][self.analysis.assembly_notes_title]) > 0 :
-                    with self.doc.create(Subsection(self.analysis.assembly_notes_title, numbering = False)) :
+                if self.analysis.did_flye_ont_fastq :
+                    method = 'ONT reads were assembled using Flye (v ' + self.analysis.versions['flye'] + ').'
+                    self.methods[self.assembly_methods_title] = self.methods[self.assembly_methods_title].append(pd.Series(method))
+                if self.analysis.did_medaka_ont_assembly :
+                    method = 'The genome assembly was polished using ONT reads and Medaka (v ' +\
+                        self.analysis.versions['medaka'] + ').'
+                    self.methods[self.assembly_methods_title] = self.methods[self.assembly_methods_title].append(pd.Series(method))
+
+
+
+            if len(self.analysis.assembly_notes) > 0 :
+                with self.doc.create(Subsection(self.assembly_notes_title, numbering = False)) :
                         left = FlushLeft()
-                        for note in self.report[self.analysis.assembly_title][self.analysis.assembly_notes_title] :
+                        for note in self.analysis.assembly_notes :
                             left.append(note)
                             left.append(LineBreak())
-                        self.doc.append(left)
-                    self.doc.append(VerticalSpace("10pt"))
+                            self.doc.append(left)
+                        self.doc.append(VerticalSpace("10pt"))
                 
             if not (self.analysis.contig_info is None) :
 
@@ -137,31 +179,63 @@ class PimaReport :
                         self.doc.append(LineBreak())
                         self.doc.append(VerticalSpace("10pt"))
 
+
+    def add_contamination(self) :
+
+        if self.analysis.kraken_fracs is None :
+            return
+
+        self.doc.append(NewPage())
+
+        with self.doc.create(Section('Contamination check', numbering = False)) :
+
+            for read_type, kraken_fracs in self.analysis.kraken_fracs.iteritems() :
+
+                left = FlushLeft()
+                left.append(read_type + ' classifications')
+                left.append(VerticalSpace('5pt'))
+                self.doc.append(left)
+                            
+                with self.doc.create(Tabular(''.join(['l'] * kraken_fracs.shape[1]), width = kraken_fracs.shape[1])) as table :
+                    table.add_row(('Percent of reads', 'Level', 'Label'))
+                    table.add_hline()
+                    for index, row in kraken_fracs.iterrows() :
+                        table.add_row(row.tolist())
                         
+                self.doc.append(LineBreak())
+                self.doc.append(VerticalSpace('5pt'))
+
+                if not self.contamination_methods_title in self.methods :
+                    self.methods[self.contamination_methods_title] = ''
+
+        method = 'Kraken2 (' + self.analysis.versions['kraken2'] + ') was used to assign the raw reads into taxa.'
+        self.methods[self.contamination_methods_title] = self.methods[self.contamination_methods_title].append(pd.Series(method))
+
+                
     def add_alignment(self) :
 
-        if len(self.report[self.analysis.alignment_title][self.analysis.contig_alignment_title]) > 0:
-            alignments = self.report[self.analysis.alignment_title][self.analysis.contig_alignment_title]
+        if len(self.analysis.contig_alignment) > 0:
+            alignments = self.analysis.contig_alignment
         else :
             return
             
         self.doc.append(NewPage())
 
-        with self.doc.create(Section(self.analysis.alignment_title, numbering = False)) :
+        with self.doc.create(Section(self.alignment_title, numbering = False)) :
 
-            with self.doc.create(Subsection(self.analysis.snp_indel_title, numbering = False)) :
+            with self.doc.create(Subsection(self.snp_indel_title, numbering = False)) :
 
                 with self.doc.create(Tabular('ll', width = 2)) as table :
                     table.add_row(('SNPs', '{:,}'.format(self.analysis.quast_mismatches)))
                     table.add_row(('Small indels', '{:,}'.format(self.analysis.quast_indels)))
                 self.doc.append(LineBreak())
                     
-            if len(self.report[self.analysis.alignment_title][self.analysis.alignment_notes_title]) > 0 :
+            if len(self.analysis.alignment_notes) > 0 :
 
-                with self.doc.create(Subsection(self.analysis.alignment_notes_title, numbering = False)) :
+                with self.doc.create(Subsection(self.alignment_notes_title, numbering = False)) :
 
                     left = FlushLeft()
-                    for note in self.report[self.analysis.alignment_title][self.analysis.alignment_notes_title] :
+                    for note in self.analysis.alignment_notes :
                         left.append(note)
                         left.append(LineBreak())
                     self.doc.append(left)
@@ -176,18 +250,23 @@ class PimaReport :
                     with self.doc.create(Figure(position = 'H')) as figure :
                         figure.add_image(image_png, width = '5in')
 
+                    
+        method = 'The genome assembly was aligned against the reference sequencing using dnadiff (v ' \
+            + self.analysis.versions['dnadiff'] + ').'
+        self.methods[self.reference_methods_title] = self.methods[self.reference_methods_title].append(pd.Series(method))
+
 
     def add_features(self) :
 
-        if len(self.report[self.analysis.feature_title]) == 0:
+        if len(self.analysis.feature_hits) == 0:
             return
 
         self.doc.append(NewPage())
         
-        with self.doc.create(Section(self.analysis.feature_title, numbering = False)) :
-            for feature_name in self.report[self.analysis.feature_title].index.tolist() :
+        with self.doc.create(Section(self.feature_title, numbering = False)) :
+            for feature_name in self.analysis.feature_hits.index.tolist() :
 
-                features = self.report[self.analysis.feature_title][feature_name].copy()
+                features = self.analysis.feature_hits[feature_name].copy()
                 if features.shape[0] == 0 :
                     continue
                     
@@ -201,7 +280,7 @@ class PimaReport :
                         self.doc.append('None')
                         continue
 
-                    for contig in pandas.unique(features.iloc[:, 0]) :
+                    for contig in pd.unique(features.iloc[:, 0]) :
 
                         self.doc.append(contig)
 
@@ -217,11 +296,16 @@ class PimaReport :
 
                         self.doc.append(LineBreak())
                         self.doc.append(VerticalSpace("10pt"))
-                                        
+
+        method = 'The genome assembly was queried for features using blastn (v ' + self.analysis.versions['blastn'] + ').  ' + \
+            'Feature hits were clustered using bedtools (v ' + self.analysis.versions['bedtools'] + ') ' + \
+            'and the highest scoring hit for each cluster was reported.'
+        self.methods[self.feature_methods_title] = self.methods[self.feature_methods_title].append(pd.Series(method))
+
                                         
     def add_feature_plots(self) :
         
-        if len(self.report[self.analysis.feature_plot_title]) == 0 :
+        if len(self.analysis.feature_plots) == 0 :
             return
 
         self.doc.append(NewPage())
@@ -232,9 +316,9 @@ class PimaReport :
 
             self.doc.append('Only contigs with features are shown')
 
-            for contig in self.report[self.analysis.feature_plot_title].index.tolist() :
+            for contig in self.analysis.feature_plots.index.tolist() :
 
-                image_png = os.path.basename(self.report[self.analysis.feature_plot_title][contig])
+                image_png = os.path.basename(self.analysis.feature_plots[contig])
                 
                 with self.doc.create(Figure(position = 'h!')) as figure :
                     figure.add_image(image_png, width = '7in')
@@ -271,6 +355,15 @@ class PimaReport :
                         for i in range(region_mutations.shape[0]) :
                             table.add_row(region_mutations.iloc[i, [0,1,3,4,5,6]].values.tolist())
 
+        method = self.analysis.mutations_read_type + ' reads were mapped to the reference sequence using minimap2 (v '\
+            + self.analysis.versions['minimap2'] + ').'
+        self.methods[self.mutation_methods_title] = self.methods[self.mutation_methods_title].append(pd.Series(method))
+
+        method = ' '.join(['Mutations were identified using'
+                           'samtools mpileup (v', self.analysis.versions['samtools'],  ')',
+                           'and varscan (v', self.analysis.versions['varscan'], ').'])
+        self.methods[self.mutation_methods_title] = self.methods[self.mutation_methods_title].append(pd.Series(method))
+
                             
     def add_amr_matrix(self) :
 
@@ -298,17 +391,14 @@ class PimaReport :
     def add_large_indels(self) :
 
         # Make sure we looked for mutations
-        if len(self.report[self.analysis.large_indel_title]) == 0 :
+        if len(self.analysis.large_indels) == 0 :
             return
         
-        large_indels = self.report[self.analysis.large_indel_title]
+        large_indels = self.analysis.large_indels
 
-        if large_indels is None :
-            return
-        
         self.doc.append(NewPage())
 
-        with self.doc.create(Section(self.analysis.large_indel_title, numbering = False)) :
+        with self.doc.create(Section(self.large_indel_title, numbering = False)) :
         
             for genome in ['Reference insertions', 'Query insertions'] :
 
@@ -331,17 +421,23 @@ class PimaReport :
                         for i in range(genome_indels.shape[0]) :
                             table.add_row(genome_indels.iloc[i,:].values.tolist())
 
+        method = 'Large insertions or deletions were found as the complement of aligned ' + \
+            'regions using bedtools (v ' + self.analysis.versions['bedtools'] + ').'
+        self.methods[self.reference_methods_title] = self.methods[self.reference_methods_title].append(pd.Series(method))
+
                             
     def add_plasmids(self) :
 
-        if len(self.report[self.analysis.plasmid_title]) == 0 :
+        if not self.analysis.did_call_plasmids :
             return
-
+        
         # Make sure we looked for mutations
-        plasmids = self.report[self.analysis.plasmid_title].copy()
+        plasmids = self.analysis.plasmids
 
         if plasmids is None :
             return
+
+        plasmids = plasmids.copy()
         
         self.doc.append(NewPage())
 
@@ -362,24 +458,34 @@ class PimaReport :
                 table.add_hline()
                 for i in range(plasmids.shape[0]) :
                     table.add_row(plasmids.iloc[i, 0:6].values.tolist())
-
                     
+        method = ' '.join(['The plasmid reference database was queried against the genome assembly using minimap2 (v',
+                           self.analysis.versions['minimap2'], ').'])
+        self.methods[self.plasmid_methods_title] = self.methods[self.plasmid_methods_title].append(pd.Series(method))
+        
+        method = 'The resulting SAM was converted to a PSL using a custom version of sam2psl.'
+        self.methods[self.plasmid_methods_title] = self.methods[self.plasmid_methods_title].append(pd.Series(method))
+
+        method = 'Plasmid-to-genome hits were resolved using the pChunks algorithm.'
+        self.methods[self.plasmid_methods_title]  = self.methods[self.plasmids_methods_title].append(pd.Series(method))
+
+
     def add_methods(self) :
 
+        if len(self.methods) == 0 :
+            return
+        
         self.doc.append(NewPage())
 
-        methods = self.report[self.analysis.methods_title]
+        with self.doc.create(Section(self.methods_title, numbering = False)) :
 
-        with self.doc.create(Section(self.analysis.methods_title, numbering = False)) :
+            for methods_section in self.methods.index.tolist() :
 
-            for methods_section in methods.index.tolist() :
-
-                if len(methods[methods_section]) == 0 :
+                if len(self.methods[methods_section]) == 0 :
                     continue
                 
                 with self.doc.create(Subsection(methods_section, numbering = False)) :
-
-                    self.doc.append('  '.join(methods[methods_section]))
+                    self.doc.append(' '.join(self.methods[methods_section]))
 
 
     def make_tex(self) :
@@ -392,6 +498,7 @@ class PimaReport :
         self.start_doc()
         self.add_header()
         self.add_summary()
+        self.add_contamination()
         self.add_alignment()
         self.add_features()
         self.add_feature_plots()

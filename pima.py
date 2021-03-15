@@ -8,7 +8,6 @@ import locale
 import logging
 import os
 import re
-import pyfastx
 import shutil
 import statistics
 import subprocess
@@ -17,7 +16,7 @@ import time
 from argparse import ArgumentParser, HelpFormatter
 
 import numpy
-import pandas
+import pandas as pd
 import numpy as np
 import joblib
 
@@ -31,21 +30,22 @@ import matplotlib.pyplot as plt
 
 from ba_report import PimaReport
 
-pandas.set_option('display.max_colwidth', 200)
+pd.set_option('display.max_colwidth', 200)
 
 VERSION=1.0
 
 pima_path = os.path.dirname(os.path.realpath(__file__))
 data_dir = os.path.join(pima_path, 'data')
-amr_database_default = f"{pima_path}/data/amr.fasta"
-amr_gene_drug_tsv = f"{pima_path}/data/gene_drug.tsv"
+amr_database_default = os.path.join(pima_path, 'data/amr.fasta')
+amr_gene_drug_tsv = os.path.join(pima_path, 'data/gene_drug.tsv')
 amr_default_color = '#FED976'
-inc_database_default = f"{pima_path}/data/inc.fasta"
+inc_database_default = os.path.join(pima_path, 'data/inc.fasta')
 inc_default_color = '#0570B0'
 included_databases = [amr_database_default, inc_database_default]
 
-plasmid_database_default = f"{pima_path}/data/plasmids_and_vectors.fasta"
-reference_dir_default = f"{pima_path}/reference_sequences"
+plasmid_database_default_fasta = os.path.join(pima_path, 'data/plasmids_and_vectors.fasta')
+kraken_database_default = os.path.join(pima_path, 'data/kraken2')
+reference_dir_default = os.path.join(pima_path, 'data/reference_sequences')
 
 
 class Colors:
@@ -86,6 +86,7 @@ def nicenumber(x, round):
 
 
 def pretty(low, high, n):
+    
     range = nicenumber(high - low, False)
     d     = nicenumber(range / (n-1), True)
     miny  = np.floor(low  / d) * d
@@ -109,10 +110,152 @@ def format_kmg(number, decimals = 0) :
     
 class Analysis :
 
-    def __init__(self, opts, unknown_args) :
+    def __init__(self, opts = None, unknown_args = None) :
 
-        self.input_given = []
+        # The actual steps to carry out in the analysis held as a list
+        self.analysis = []
+        
+        # Verbosity levels and colors
+        self.error_color = Colors.FAIL
+        self.main_process_verbosity = 1
+        self.warning_color = Colors.WARNING
+        self.warning_verbosity = 1
+        self.main_process_color = Colors.OKGREEN
+        self.sub_process_verbosity = 2
+        self.sub_process_color = Colors.OKBLUE
+        self.command_verbosity = 3
+        self.errors = []
+        self.warnings = []
+        
+        # Watch options
+        self.ont_watch = None
+        self.ont_watch_reads_min = 200000
+        self.ont_watch_time_max = 1 * 60 * 60
+        self.ont_watch_between_max = 10 * 60
+        self.ont_watch_sleep_time = 10
+        
+        # ONT FASTQ input
+        self.ont_fastq = None
+        self.ont_raw_fastq = self.ont_fastq
+        self.ont_read_count = None
+        self.ont_read_lengths = None
+        self.will_have_ont_fastq = False
 
+        # Basecalling
+        self.ont_fast5 = None
+        self.basecaller = 'guppy'
+        self.ont_fastq_dir = None
+        self.only_basecall = False
+        self.did_guppy_ont_fast5 = False
+
+        # Read metadata
+        self.read_metadata = pd.Series(dtype = object)
+
+        # Demultiplexing
+        self.multiplexed = None
+        self.is_barcode = False
+        self.barcode_min_fraction = 0.025
+        self.did_qcat_ont_fastq = False
+        self.barcodes = pd.Series(dtype = object)
+        self.barcode_summary = None
+
+        self.error_correct = False
+
+        # Contamination
+        self.contam_check = False
+        self.kraken_fracs = pd.Series(dtype = object)
+        self.kraken_database = kraken_database_default
+        self.did_contamination_check = False
+        
+        # Genome FASTA input
+        self.genome_fasta = None
+        self.will_have_genome_fasta = False
+
+        # Illumina FASTQ input
+        self.illumina_fastq = None
+        self.pilon_coverage_min = 25
+        self.did_spades_illumina_fastq = False
+        self.did_pilon_ont_assembly = False
+
+        # Output options
+        self.output_dir = None
+        self.overwrite = False
+        
+        # Assembly options
+        self.assembler = 'flye'
+        self.genome_assembly_size = None
+        self.genome_assembly_raw_size = None
+        self.assembly_coverage = None
+        self.racon = False
+        self.racon_rounds = None
+        self.no_medaka = False
+        self.ont_n50 = None
+        self.ont_n50_min = 2500
+        self.ont_coverage_min = 30
+        self.only_assemble = False
+        self.no_assembly = False
+        self.did_flye_ont_fastq = False
+        self.did_medaka_ont_assembly = False
+        self.will_have_ont_assembly = False
+
+        # Feature options
+        self.amr_database = amr_database_default
+        self.no_amr = False
+        self.inc_database = inc_database_default
+        self.no_inc = False
+        
+        self.feature_fastas = None
+        self.feature_hits = pd.Series(dtype = object)
+        self.feature_plots = pd.Series(dtype = object)
+        self.feature_dirs = []
+        self.feature_names = []
+        self.feature_colors = []
+        self.did_blast_feature_sets = False
+
+        # Download options
+        self.download = False
+        
+        # Reference options
+        self.reference_dir = None
+        self.organism = None
+        self.organism_dir = None
+        self.auto_reference = False
+        self.will_have_reference_fasta = False
+        self.reference_fasta = None
+        self.reference = None
+        self.mutation_region_bed = None
+        self.amr_mutations = pd.Series(dtype = object)
+        self.did_call_mutations = False
+        self.amr_deletions = pd.DataFrame()
+        self.did_call_large_indels = False
+
+        # How much stuff to print
+        self.verbosity = 1
+
+        # Files to remove when done
+        self.files_to_clean = []
+        
+        # Plasmid  options
+        self.plasmids = False
+        self.plasmid_database = plasmid_database_default_fasta
+        self.did_call_plasmids = False
+
+        # Notes for different sections of the analysis
+        self.assembly_notes = pd.Series(dtype = object)      
+        self.alignment_notes = pd.Series(dtype = object)
+        self.contig_alignment = pd.Series(dtype = object)
+        
+        self.versions = pd.Series(dtype = object)
+        
+        self.logging_handle = None
+        self.fake_run = False
+
+        self.bundle = None
+        self.report = pd.Series(dtype = object)
+        
+        if opts is None or unknown_args is None :
+            return
+        
         # Date-time information
         self.start_time = datetime.datetime.now().strftime("%Y-%m-%d")
 
@@ -120,31 +263,40 @@ class Analysis :
         self.logging_file = None
         self.logging_handle = None
         
-        # Input options
+        # Watch options
         self.ont_watch = opts.ont_watch
         self.ont_watch_reads_min = opts.ont_watch_min_reads
         self.ont_watch_time_max = opts.ont_watch_max_time * 60 * 60
         self.ont_watch_between_max = opts.ont_watch_between_time * 60
         self.ont_watch_sleep_time = 10
-        
+
+        # Basecalling
         self.ont_fast5 = opts.ont_fast5
         self.basecaller = opts.basecaller
-        self.albacore_seq_files_file = opts.albacore_seq_file
-        self.barcode_min_fraction = 2.5
-        self.ont_fastq = opts.ont_fastq
-        self.ont_raw_fastq = opts.ont_fastq
-        self.ont_fastq_dir = None
         self.only_basecall = opts.only_basecall
+        
+        # ONT FASTQ input
+        self.ont_fastq = opts.ont_fastq
+        self.ont_raw_fastq = self.ont_fastq
+
+        # Demultiplexing
         self.multiplexed = opts.multiplexed
-        self.demux = opts.demux
-        self.is_barcode = False
+        self.barcodes = pd.Series()
+        self.barcode_min_fraction = 2.5
+        
         self.error_correct = opts.error_correct
+
+        # Contamination
+        self.contam_check = opts.contamination
+        self.did_contamination_check = False
+
+        # Illumina FASTQ input
         self.illumina_fastq = opts.illumina_fastq
+
+        # Genome FASTA input
         self.genome_fasta = opts.genome
 
-        self.will_have_ont_fastq = False
-        self.will_have_genome_fasta = False
-        
+        # Output options
         self.output_dir = opts.output
         self.overwrite = opts.overwrite
 
@@ -155,23 +307,18 @@ class Analysis :
         self.racon = opts.racon
         self.racon_rounds = opts.racon_rounds
         self.no_medaka = opts.no_medaka
-        self.ont_n50 = None
-        self.ont_n50_min = 2500
-        self.ont_coverage_min = 30
-        self.illumina_length_mean = None
-        self.illumina_coverage_min = 30
-        self.nanopolish = opts.nanopolish
-        self.nanopolish_coverage_max = opts.max_nanopolish_coverage
-        self.pilon = opts.pilon
-        self.pilon_coverage_min = 25
-        self.will_have_ont_assembly = False
-        self.contig_info = None
         self.only_assemble = opts.only_assemble
         self.no_assembly = opts.no_assembly
-        
-        # The assembly itself
-        self.genome = None #pandas.Series()
 
+        # Illumina metrics
+        self.illumina_length_mean = None
+        self.illumina_coverage_min = 30
+        self.did_pilon_ont_assembly = False
+
+        # The assembly itself
+        self.genome = None
+        self.contig_info = None
+        
         # Vs. reference options
         self.reference_identity_min = 98.
         self.reference_alignment_min = 97.
@@ -179,6 +326,7 @@ class Analysis :
         # Plasmid and feature options
         self.plasmids = opts.plasmids
         self.plasmid_database = opts.plasmid_database
+        self.did_call_plasmids = False
 
         self.no_drawing = opts.no_drawing
 
@@ -186,9 +334,10 @@ class Analysis :
         self.no_amr = opts.no_amr
         self.inc_database = opts.inc_database
         self.no_inc = opts.no_inc
-
+        
         self.feature_fastas = opts.feature
-        self.feature_hits = pandas.Series()
+        self.feature_hits = pd.Series()
+        self.feature_plots = pd.Series()
         self.feature_dirs = []
         self.feature_names = []
         self.feature_colors = []
@@ -198,15 +347,11 @@ class Analysis :
         # Reference options
         self.reference_dir = opts.reference_dir
         self.organism = opts.organism
+        self.auto_reference = opts.auto_reference
         self.reference_fasta = opts.reference_genome
         self.mutation_region_bed = opts.mutation_regions
-        self.amr_mutations = pandas.Series()
-        self.amr_deletions = pandas.DataFrame()
         
         self.threads = opts.threads
-
-        self.errors = []
-        self.warnings = []
         
         # How much stuff to print
         self.verbosity = opts.verbosity
@@ -218,79 +363,34 @@ class Analysis :
         self.fake_run = opts.fake_run
 
         # Reporting
+        self.no_report = False
         self.bundle = opts.bundle
-        self.versions = pandas.Series()
-        self.report = pandas.Series()
 
         self.analysis_name = opts.name
-        self.report['name'] = self.analysis_name
-        
-        self.summary_title = 'PIMA run summary'
-        self.report[self.summary_title] = pandas.Series()
-
-        self.assembly_title = 'Assembly'
-        self.assembly_notes_title = 'Assembly notes'
-        self.report[self.assembly_title] = pandas.Series()
-        self.report[self.assembly_title][self.assembly_notes_title] = pandas.Series()
-        
-        self.alignment_title = 'Comparison with reference'
-        self.alignment_notes_title = 'Alignment notes'
-        self.contig_alignment_title = 'Alignment vs. reference contigs'
-        self.report[self.alignment_title] = pandas.Series()
-        self.report[self.alignment_title][self.alignment_notes_title] = pandas.Series()
-        self.report[self.alignment_title][self.contig_alignment_title] = pandas.Series()
-
-        self.feature_title = 'Features found in the assembly'
-        self.report[self.feature_title] = pandas.Series()
-
-        self.feature_plot_title = 'Feature annotation plots'
-        self.report[self.feature_plot_title] = pandas.Series()
-        
+                
         self.mutation_title = 'Mutations'
-        self.report[self.mutation_title] = pandas.Series()
+        self.report[self.mutation_title] = pd.Series()
 
-        self.large_indel_title = 'Large insertions & deletions'
-        self.snp_indel_title = 'SNPs and small indels'
-        self.report[self.large_indel_title] = pandas.Series()
+        self.large_indels = pd.Series()
 
         self.plasmid_title = 'Plasmid annotation'
-        self.report[self.plasmid_title] = pandas.Series()
-
-        self.stats_title = 'Assembly statistics'
-        self.report[self.stats_title] = pandas.Series()
+        self.report[self.plasmid_title] = pd.Series()
 
         self.amr_matrix_title = 'AMR matrix'
-        self.report[self.amr_matrix_title] = pandas.Series()
+        self.report[self.amr_matrix_title] = pd.Series()
         
         self.methods_title = 'Methods summary'
-        self.report[self.methods_title] = pandas.Series()
+        self.report[self.methods_title] = pd.Series()
         self.basecalling_methods = 'Basecalling & processing'
-        self.report[self.methods_title][self.basecalling_methods] = pandas.Series()
+        self.report[self.methods_title][self.basecalling_methods] = pd.Series()
         self.assembly_methods = 'Assembly & polishing'
-        self.report[self.methods_title][self.assembly_methods] = pandas.Series()
-        self.reference_methods = 'Reference comparison'
-        self.report[self.methods_title][self.reference_methods] = pandas.Series()
-        self.feature_methods = 'Feature annotation'
-        self.report[self.methods_title][self.feature_methods] = pandas.Series()
+        self.report[self.methods_title][self.assembly_methods] = pd.Series()
         self.mutation_methods = 'Mutation screening '
-        self.report[self.methods_title][self.mutation_methods] = pandas.Series()
+        self.report[self.methods_title][self.mutation_methods] = pd.Series()
         self.plasmid_methods = 'Plasmid annotation'
-        self.report[self.methods_title][self.plasmid_methods] = pandas.Series()
+        self.report[self.methods_title][self.plasmid_methods] = pd.Series()
         
         self.meta_title = 'PIMA meta-information'
-        
-        # Verbosity levels and colors
-        self.error_color = Colors.FAIL
-        self.main_process_verbosity = 1
-        self.warning_color = Colors.WARNING
-        self.warning_verbosity = 1
-        self.main_process_color = Colors.OKGREEN
-        self.sub_process_verbosity = 2
-        self.sub_process_color = Colors.OKBLUE
-        self.command_verbosity = 3
-
-        # The actual steps to carry out in the analysis held as a list
-        self.analysis = []
         
         # See if we got any unknown args.  Not allowed.
         if len(unknown_args) != 0 :
@@ -310,8 +410,8 @@ class Analysis :
             try : 
                 return(re.split('\\n', subprocess.check_output(command, shell = True).decode('utf-8')))
             except :
-                self.print_and_log('Command ' + command + ' failed; exiting', 0, Colors.FAIL)
-                self.error_out()
+                message = 'Command ' + command + ' failed; exiting'
+                self.error_out(message)
 
             
     def print_and_run(self, command) :
@@ -332,27 +432,25 @@ class Analysis :
         return os.path.isfile(the_file)
 
     
-    def validate_file_size(self, the_file) :
+    def validate_file_size(self, the_file, min_size = 0) :
         if not self.fake_run :
-            return os.stat(the_file).st_size > 0
+            return os.stat(the_file).st_size >= min_size
         else :
             return True
 
         
-    def validate_file_and_size(self, the_file) :
-        return(self.validate_file(the_file) and self.validate_file_size(the_file))
+    def validate_file_and_size(self, the_file, min_size = 0) :
+        return(self.validate_file(the_file) and self.validate_file_size(the_file, min_size))
         
         
     def validate_file_and_size_or_error(self, the_file, error_prefix = 'The file',
                                         presence_suffix = 'doesn\'t exist',
-                                        size_suffix = 'is size 0') :
+                                        size_suffix = 'is size 0', min_size = 0) :
         if not self.validate_file(the_file) and not self.fake_run:
-            self.print_and_log(' '.join([error_prefix, the_file, presence_suffix]), 0, Colors.FAIL)
-            self.error_out()
+            self.error_out(' '.join([error_prefix, the_file, presence_suffix]))
 
-        if not self.validate_file_size(the_file) and not self.fake_run :
-            self.print_and_log(' '.join([error_prefix, the_file, size_suffix]), 0, Colors.FAIL)
-            self.error_out()
+        if not self.validate_file_size(the_file, min_size) and not self.fake_run :
+            self.error_out(' '.join([error_prefix, the_file, size_suffix]))
 
 
     def validate_utility(self, utility, error) :
@@ -389,7 +487,7 @@ class Analysis :
         
     def load_fasta(self, fasta) :
 
-        sequence = pandas.Series()
+        sequence = pd.Series(dtype = object)
         for contig in Bio.SeqIO.parse(fasta, 'fasta') :
             sequence[contig.id] = contig
         return(sequence)
@@ -410,19 +508,28 @@ class Analysis :
         for i in self.reference :
             self.reference_size += len(i.seq)
         
-        
+
     def download_databases(self) :
 
         self.print_and_log('Downloading missing databases', self.main_process_verbosity, self.main_process_color)
 
-        databases = ['amr', 'inc', 'plasmids_and_vectors']
-        for database in databases :
-            database_fasta = os.path.join(data_dir, database + '.fasta')
-            if self.validate_file_and_size(database_fasta) :
-                continue
+        database_fasta = plasmid_database_default_fasta
+        if not self.validate_file_and_size(database_fasta) :
+            self.print_and_log('Downloading plasmid database', self.sub_process_verbosity, self.sub_process_color)
             command = ' '.join(['wget',
                                 '-O', database_fasta,
                                 'http://pima.appliedbinf.com/data/' + database + '.fasta'])
+            self.print_and_run(command)
+
+        if not os.path.isdir(kraken_database_default) :
+            self.print_and_log('Downloading and building kraken2 database (may take some time)', self.sub_process_verbosity, self.sub_process_color)
+            kraken_stdout, kraken_stderr = self.std_files(kraken_database_default)
+            command = ' '.join(['kraken2-build',
+                                '--standard',
+                                '--use-ftp',
+                                '--threads', str(self.threads),
+                                '--db', kraken_database_default,
+                                '1>' + kraken_stdout, '2>' + kraken_stderr])
             self.print_and_run(command)
             
             
@@ -436,7 +543,7 @@ class Analysis :
             return
         
         # Make the bwa index
-        std_prefix = re.sub('\.f(na|asta)$', '', fasta)
+        std_prefix = re.sub('\\.f(na|asta)$', '', fasta)
         bwa_index_stdout, bwa_index_stderr = self.std_files(std_prefix + '_index')
         command = ' '.join(['bwa',
                             'index',
@@ -450,28 +557,28 @@ class Analysis :
             
     def bwa_short_illumina_fastq(self, genome, fastq, bam) :
 
-        std_prefix = re.sub('\.bam$', '', bam)
+        std_prefix = re.sub('\\.bam$', '', bam)
             
         self.bwa_index_fasta(genome)
 
         # Align the reads 
         sai = []
-        for i in range(len(self.illumina_fastq)) :
+        for i in range(len(fastq)) :
             bwa_stdout, bwa_stderr = self.std_files(std_prefix + '_aln')
             this_sai = std_prefix + '_aln_' + str(i) + '.sai'
             command = ' '.join(['bwa aln',
                                 '-t', str(self.threads),
                                 genome,
-                                self.illumina_fastq[i],
+                                fastq[i],
                                 '1>', this_sai,
                                 '2>', bwa_stderr])
             sai += [this_sai]
             self.print_and_run(command)
             self.validate_file_and_size_or_error(this_sai)
-                          
+            
         # And turn the SAI into a proper SAM file
         read_type = 'samse'
-        if len(self.illumina_fastq) > 1 :
+        if len(fastq) > 1 :
             read_type = 'sampe'
         bwa_stdout, bwa_stderr = self.std_files(std_prefix + '_sam')
         tmp_file = std_prefix + '.tmp'
@@ -479,7 +586,7 @@ class Analysis :
                             read_type,
                             genome,
                             ' '.join(sai),
-                            ' '.join(self.illumina_fastq),
+                            ' '.join(fastq),
                             '2>', bwa_stderr,
                             '| samtools',
                             'sort',
@@ -488,13 +595,13 @@ class Analysis :
                             '-',
                             '1>/dev/null 2>/dev/null'])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(bam)
+        self.validate_file_and_size_or_error(the_file = bam, min_size = 100)
         self.index_bam(bam)
 
 
     def minimap_ont_fastq(self, genome, fastq, bam) :
 
-        std_prefix = re.sub('\.bam$', '', bam)
+        std_prefix = re.sub('\\.bam$', '', bam)
         minimap_stdout, minimap_stderr = self.std_files(std_prefix)
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
@@ -508,13 +615,13 @@ class Analysis :
                             '-T reads.tmp -',
                             '1>/dev/null 2>/dev/null'])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(bam)
+        self.validate_file_and_size_or_error(the_file = bam, min_size = 1000)
         self.index_bam(bam)
 
         
     def minimap_illumina_fastq(self, genome, fastq, bam) :
 
-        std_prefix = re.sub('\.bam$', '', bam)
+        std_prefix = re.sub('\\.bam$', '', bam)
         minimap_stdout, minimap_stderr = self.std_files(std_prefix)
         command = ' '.join(['minimap2 -a',
                             '-t', str(self.threads),
@@ -528,7 +635,7 @@ class Analysis :
                             '-T reads.tmp -',
                             '1>/dev/null 2>/dev/null'])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(bam)
+        self.validate_file_and_size_or_error(the_file = bam, min_size = 1000)
         self.index_bam(bam)
 
         
@@ -538,7 +645,7 @@ class Analysis :
                             '1>/dev/null 2>/dev/null'])
         self.print_and_run(command)
         index_bai = bam + '.bai'
-        self.validate_file_and_size_or_error(index_bai)
+        self.validate_file_and_size_or_error(the_file = index_bai, min_size = 1000)
 
 
     def dnadiff_fasta(self, reference_fasta, query_fasta, output_prefix) :
@@ -549,11 +656,14 @@ class Analysis :
                             reference_fasta,
                             query_fasta,
                             '1>' + dnadiff_stdout, '2>' + dnadiff_stderr])
+        output_1coords = output_prefix + '.1coords'
         self.print_and_run(command)
+        self.validate_file_and_size_or_error(the_file = output_1coords, min_size = 500)
         
         
-    def error_out(self) :
-        exit(1)
+    def error_out(self, message) :
+        print(Colors.FAIL + message + Colors.ENDC)
+        sys.exit(1)
 
 
     def unless_only_basecall(function) :
@@ -566,7 +676,7 @@ class Analysis :
 
     def unless_given_genome(function) :
         def wrapper(self) :
-            if self.genome_fasta :
+            if not(self.genome_fasta is None) :
                 return
             function(self)
         return wrapper
@@ -626,10 +736,17 @@ class Analysis :
         if self.is_barcode :
             return
         
+        if self.ont_fastq :
+            self.errors += ['--ont-fast5 and --ont-fastq are mutually exclusive']
+        
         self.print_and_log('Validating ONT fast5 files and utilities', self.main_process_verbosity, self.main_process_color)
+
+        if not os.path.exists(self.ont_fast5) :
+            self.errors += ['Input FAST5 directory ' + self.ont_fast5 + ' cannot be found']
+            return
         
         if not os.path.isdir(self.ont_fast5) :
-            self.errors += ['Input FAST5 directory ' + self.ont_fast5 + ' cannot be found']
+            self.errors += ['Input FAST5 directory ' + self.ont_fast5 + ' is not a directory']
             return
         
         #1 - Look for FAST5 files in the directory
@@ -658,7 +775,7 @@ class Analysis :
 
         self.print_and_log('Validating ONT FASTQ', self.main_process_verbosity, self.main_process_color)
 
-        if not os.path.isfile(self.ont_fastq) :
+        if not self.validate_file_and_size(the_file = self.ont_fastq, min_size = 1000) :
             self.errors += ['Input ONT FASTQ file ' + self.ont_fastq + ' cannot be found']
 
         self.will_have_ont_fastq = True
@@ -671,7 +788,7 @@ class Analysis :
 
         self.print_and_log('Validating genome FASTA', self.main_process_verbosity, self.main_process_color)
 
-        if not self.validate_file_and_size(self.genome_fasta) :
+        if not self.validate_file_and_size(self.genome_fasta, min_size = 1000) :
             self.errors += ['Input genome FASTA ' + self.genome_fasta + ' cannot be found']
         else :
             self.load_genome()
@@ -680,10 +797,12 @@ class Analysis :
             
 
     def validate_output_dir(self) :
-    
-        if not opts.output :
+
+        self.print_and_log('Validating output dir', self.main_process_verbosity, self.main_process_color)
+        
+        if not self.output_dir :
             self.errors += ['No output directory given (--output)']
-        elif self.output_dir and os.path.isdir(self.output_dir) and not self.overwrite :
+        elif os.path.exists(self.output_dir) and not self.overwrite :
             self.errors += ['Output directory ' + self.output_dir + ' already exists.  Add --overwrite to ignore']
 
         self.analysis = ['make_output_dir'] + self.analysis
@@ -711,8 +830,26 @@ class Analysis :
 
         self.will_have_ont_fastq = True
 
-        if self.ont_fast5 :
-            self.analysis += ['guppy_ont_fast5']
+        if not self.ont_watch :
+            self.analysis += ['guppy_given_ont_fast5']
+
+
+    def validate_multiplexed(self) :
+
+        if not self.multiplexed :
+            return
+        
+        if self.is_barcode :
+            return
+
+        if not self.will_have_ont_fastq :
+            self.errors += ['--multiplexed requires that an ONT FASTQ be given or generated']
+        
+        # If we are watching an ONT run, we will demultiplex live
+        if self.ont_watch :
+            return
+        
+        self.analysis += ['qcat_given_ont_fastq']
 
         
     def validate_qcat(self) :
@@ -720,10 +857,7 @@ class Analysis :
         if not self.multiplexed :
             return
 
-        if self.demux != 'qcat' :
-            return
-        
-        if not self.will_have_ont_fastq :
+        if self.is_barcode :
             return
 
         self.print_and_log('Validating qcat demultiplexer', self.main_process_verbosity, self.main_process_color)
@@ -732,17 +866,19 @@ class Analysis :
             command = 'qcat --version'
             self.versions['qcat'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
         
-        self.analysis += ['qcat_ont_fastq']
 
-
-    def validate_ont_fastq_info(self) :
+    def validate_info_given_ont_fastq(self) :
 
         if not self.will_have_ont_fastq :
             return
 
-        self.analysis += ['ont_fastq_info']
+        # If we are multiplexed, we will let the sub-analyses handle info
+        if self.multiplexed :
+            return
+
+        self.analysis += ['info_given_ont_fastq']
         
-        
+       
     def validate_lorma(self) :
         
         if not self.error_correct :
@@ -758,6 +894,31 @@ class Analysis :
 
         self.analysis += ['lorma_ont_fastq']
 
+
+    def validate_contamination_check(self) :
+
+        if not self.contam_check :
+            return
+
+        self.print_and_log('Validating contamination check', self.main_process_verbosity, self.main_process_color)
+        
+        if not self.will_have_ont_fastq and self.illumina_fastq is None :
+            self.errors += ['--contamination requires a set of FASTQ reads']
+        
+        if self.validate_utility('kraken2', 'kraken2 is not on the PATH (required by --contamination-check).') :
+            command = 'kraken2 --version'
+            self.versions['kraken2'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+
+        # Will instead do for each barcode
+        if self.multiplexed :
+            return
+        
+        # Will instead do for each batch
+        if self.ont_watch :
+            return
+            
+        self.analysis += ['fastq_contamination']
+            
 
     @unless_only_basecall
     @unless_no_assembly
@@ -776,17 +937,20 @@ class Analysis :
         
         self.print_and_log('Validating assembly size', self.main_process_verbosity, self.main_process_color)
         
-        if not re.match('[0-9]+(\\.[0-9]+)?[mkgMKG]', self.genome_assembly_size) :
-            self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_assembly_size)]
-        else :
-            power = 0
-            if re.match('[0-9]+(\\.[0-9]+)?[kK]', self.genome_assembly_size) :
-                power = 3
-            if re.match('[0-9]+(\\.[0-9]+)?[mM]', self.genome_assembly_size) :
-                power = 6
-            if re.match('[0-9]+(\\.[0-9]+)?[gG]', self.genome_assembly_size) :
-                power = 9
-            self.genome_assembly_raw_size = float(re.sub('[mkgMKG]', '', self.genome_assembly_size)) * 10**power
+        if not re.match('^[0-9]+(\\.[0-9]+)?[mkgMKG]?$', self.genome_assembly_size) :
+            self.errors += ['--genome-size needs to be a floating point number, accepting k/m/g, got ' + \
+                            str(self.genome_assembly_size)]
+            return
+
+        power = 0
+        if re.match('^[0-9]+(\\.[0-9]+)?[kK]$', self.genome_assembly_size) :
+            power = 3
+        elif re.match('^[0-9]+(\\.[0-9]+)?[mM]$', self.genome_assembly_size) :
+            power = 6
+        elif re.match('^[0-9]+(\\.[0-9]+)?[gG]$', self.genome_assembly_size) :
+            power = 9
+            
+        self.genome_assembly_raw_size = float(re.sub('[mkgMKG]', '', self.genome_assembly_size)) * 10**power
             
         
     @unless_only_basecall
@@ -829,8 +993,6 @@ class Analysis :
         
         if not self.genome_assembly_size :
             self.errors += ['Flye requires --genome-size']
-        elif not re.match('^[0-9]+(\\.[0-9]+)?[mkMK]$', self.genome_assembly_size) :
-            self.errors += ['--genome-size needs to be a floating point number in Mega or kilobases, got ' + str(self.genome_assembly_size)]
             
         if self.validate_utility('flye', 'flye is not on the PATH (required by --assembler flye).') :
             command = 'flye --version'
@@ -879,6 +1041,7 @@ class Analysis :
         if self.validate_utility('medaka_consensus', 'medaka_consensus is not on the PATH (required by --medaka)') :
             command = 'medaka --version'
             self.versions['medaka'] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
+            # TODO - Make sure there is a model for the installed guppy
 #            command = 'medaka tools list_models'
 #            models, default = self.print_and_run_command(command)[[0,1]]
 #            print(models)
@@ -889,27 +1052,6 @@ class Analysis :
         self.will_have_ont_assembly = True
 
         
-    @unless_only_basecall
-    @unless_no_assembly
-    def validate_nanopolish(self) :
-        
-        if not self.nanopolish :
-            return 
-        
-        self.print_and_log('Validating Nanopolish', self.main_process_verbosity, self.main_process_color)
-
-        if not self.ont_fast5 :
-            self.errors += ['--nanopolish requires --ont-fast5']
-
-        if not self.will_have_genome_fasta :
-            self.errors += ['--nanopolish requires that a genome be assembled or supplied']
-            
-        self.validate_utility('nanopolish', 'nanopolish is not on the PATH (required by --nanopolish)')
-
-        self.analysis += ['nanopolish_ont_assembly']
-
-
-    @unless_only_basecall
     def validate_illumina_fastq(self) :
         
         if not self.illumina_fastq :
@@ -920,12 +1062,9 @@ class Analysis :
         if not type(self.illumina_fastq) is list :
             self.illumina_fastq = [self.illumina_fastq]
 
-        if len(self.illumina_fastq) :
-            self.illumina_paired_end = False
-        
         for r_fastq in self.illumina_fastq :
-            if not self.validate_file_and_size(r_fastq) :
-                self.errors += ['Illumian FASTQ file' + r_fastq + ' cannot be found or is size 0']
+            if not self.validate_file_and_size(the_file = r_fastq, min_size = 1000) :
+                self.errors += ['Illumian FASTQ file ' + r_fastq + ' cannot be found or is size 0']
             else : # Figure out how long the reads are
                 read_lengths = []
 
@@ -936,7 +1075,7 @@ class Analysis :
                     opener = gzip.open
                     open_type = 'rt'
                 
-                r_handle = opener(self.illumina_fastq[0], open_type)
+                r_handle = opener(r_fastq, open_type)
                 parser = Bio.SeqIO.parse(r_handle, 'fastq')
 
                 for i in range(1, 10000) :
@@ -944,7 +1083,7 @@ class Analysis :
                 self.illumina_read_length_mean = statistics.mean(read_lengths)
 
         # Get the Illumina summary
-        self.analysis += ['illumina_fastq_info']
+        self.analysis += ['info_illumina_fastq']
                 
   
     @unless_only_basecall
@@ -956,7 +1095,7 @@ class Analysis :
 
         self.print_and_log('Validating Pilon and memory arguments', self.main_process_verbosity, self.main_process_color)
 
-        # TODO - Find bwa version if we are dealing with shorte reads
+        # TODO - Find bwa version if we are dealing with short reads
         for utility in ['minimap2', 'pilon'] :
             if self.validate_utility(utility, utility + ' is not on the PATH (required by --illumina-fastq).') :
                 command = utility + ' --version'
@@ -996,13 +1135,13 @@ class Analysis :
     @unless_only_basecall
     def validate_assembly_info(self) :
 
-        if not (self.ont_watch or self.ont_fast5 or self.ont_fastq or self.illumina_fastq) :
+        if not (self.will_have_ont_fastq or self.illumina_fastq) :
             return
 
         if not self.will_have_genome_fasta :
             return
 
-        self.contig_info = pandas.Series()
+        self.contig_info = pd.Series(dtype = object)
         
         self.validate_utility('samtools', 'is not on the PATH')
 
@@ -1020,7 +1159,8 @@ class Analysis :
             self.feature_fastas += [self.amr_database]
             self.feature_colors += [amr_default_color]
             if self.validate_file_and_size(amr_gene_drug_tsv) :
-                self.amr_gene_drug = pandas.read_csv(amr_gene_drug_tsv, index_col = None, sep = '\t', quoting = csv.QUOTE_NONE, header = None)
+                self.amr_gene_drug = pd.read_csv(amr_gene_drug_tsv, index_col = None, sep = '\t',
+                                                     quoting = csv.QUOTE_NONE, header = None)
                 self.drug_categories = self.amr_gene_drug.iloc[:,1].unique()
             
         if not self.no_inc :
@@ -1053,62 +1193,87 @@ class Analysis :
 
         if len(self.feature_fastas) == 0 :
             return
-
+        
         if not self.will_have_genome_fasta :
             return
         
         self.print_and_log('Validating blast utilities', self.main_process_verbosity, self.main_process_color)
-
+        
         for utility in ['makeblastdb', 'blastn', 'bedtools'] :
             if self.validate_utility(utility, utility + ' isn\'t on the PATH.') :
                 command = utility + ' -version'
                 self.versions[utility] = re.search('[0-9]+\\.[0-9.]+', self.print_and_run(command)[0]).group(0)
-                
+        
         self.analysis += ['blast_feature_sets']
 
         
     @unless_only_basecall
     @unless_only_assemble
-    def validate_reference(self) :
+    def validate_reference_fasta(self) : 
 
-        if not (self.organism or self.reference_fasta) :
+        if not self.reference_fasta :
             return
 
-        self.print_and_log('Validating reference genome and utilities', self.main_process_verbosity, self.main_process_color)
+        self.print_and_log('Validating reference FASTA', self.main_process_verbosity, self.main_process_color)
+
+        if not self.validate_file_and_size(self.reference_fasta, min_size = 1000) :
+            self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
+        else :
+            self.load_reference()
+            
+        self.will_have_reference_fasta = True
+
+        
+    @unless_only_basecall
+    @unless_only_assemble
+    def validate_organism(self) :
+
+        if not self.organism :
+            return
+
+        self.print_and_log('Validating organism', self.main_process_verbosity, self.main_process_color)
+        
+        if self.organism and self.reference_fasta :
+            self.errors += ['--organism and --reference-genome are mutually exclusive']
+        
+        if self.organism and self.auto_reference :
+            self.errors += ['--organism and --auto-reference are mutually exclusive']
+
+        if not os.path.isdir(self.reference_dir) :
+            self.errors += ['Can\'t find reference directory ' + self.reference_dir]
+    
+        self.organism_dir = os.path.join(self.reference_dir, self.organism)
+        if not os.path.isdir(self.organism_dir) :
+            self.errors += ['Can\'t find organism directory ' + self.organism_dir]
+
+        self.reference_fasta = os.path.join(self.organism_dir, 'genome.fasta')
+        if not self.validate_file_and_size(self.reference_fasta) :
+            self.errors += ['Reference organism FASTA ' + self.reference_fasta + ' can\'t be found or is size 0']
+        else :
+            self.load_reference()
+            
+        self.will_have_reference_fasta = True
+
+
+    @unless_only_basecall
+    @unless_only_assemble
+    def validate_reference(self) :
+
+        if not self.will_have_reference_fasta :
+            return
         
         if self.will_have_genome_fasta :
-            
-            if self.organism and self.reference_fasta :
-                self.errors += ['--organism and --reference-genome are mutually exclusive']
-                return
-        
-            #1 - Check for mummer utils
+
+            # Check for mummer utils
             for utility in ['nucmer', 'mummer'] :
                 self.validate_utility(utility, utility + ' is not on the PATH.')
                 
             if self.validate_utility('dnadiff', 'dnadiff is not on the PATH.') :
                 command = 'dnadiff -version 2>&1'
                 self.versions['dnadiff'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[1]).group(0)
-            
-            #2 - Check for the reference sequence either as given or in the organism dir
-            if self.organism :
-                if not os.path.isdir(self.reference_dir) :
-                    self.errors += ['Can\'t find reference directory ' + self.reference_dir]
-                else :
-                    self.organism_dir = os.path.join(self.reference_dir, self.organism)
-                    if not os.path.isdir(self.organism_dir) :
-                        self.errors += ['Can\'t find organism directory ' + self.organism_dir]
-                    else :
-                        self.reference_fasta = os.path.join(self.organism_dir, 'genome.fasta')
 
             self.analysis = self.analysis + ['call_insertions', 'quast_genome', 'draw_circos']
             
-        if self.reference_fasta :
-            if  self.validate_file_and_size(self.reference_fasta) :
-                self.load_reference()
-            else :
-                self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
-
         
     @unless_only_basecall
     @unless_only_assemble
@@ -1132,26 +1297,41 @@ class Analysis :
             return
 
         # Either from the built in set or given as an argument, make sure the file is there
-        if self.validate_file_and_size(self.mutation_region_bed) :
-            self.mutation_regions = pandas.read_csv(self.mutation_region_bed, header = 0, sep = '\t', index_col = None)
+        if self.validate_file_and_size(self.mutation_region_bed, min_size = 100) :
+            self.mutation_regions = pd.read_csv(self.mutation_region_bed, header = 0, sep = '\t', index_col = False)
 
             if self.mutation_regions.shape[1] != 7 :
                 self.errors += ['Mutation regions should be a six column file.']
 
-            if self.mutation_regions.shape[0] == 0 :
+            elif self.mutation_regions.shape[0] == 0 :
                 self.errors += ['No rows in mutation regions file.']
                 
-            if self.reference_fasta :
+            elif self.will_have_reference_fasta :
                 # Make sure that the positions in the BED file fall within the chromosomes provided in the reference sequence
                 for mutation_region in range(self.mutation_regions.shape[0]) :
                     mutation_region = self.mutation_regions.iloc[mutation_region, :]
                     if not (mutation_region[0] in self.reference) :
-                        self.errors += ['Mutation region ' + ' '.join(mutation_region.astype(str)) + ' not found in reference genome.']
+                        self.errors += [' '.join(['Mutation region',
+                                                  ' '.join(mutation_region.astype(str)),
+                                                  'not found in reference genome.'])]
                         continue
+
+                    if not isinstance(mutation_region[1], numpy.int64) :
+                        self.errors += ['Non-integer found in mutation region start (column 2): ' + mutation_region[1]]
+                        break
+                    elif not isinstance(mutation_region[2], numpy.int64) :
+                        self.errors += ['Non-integer found in mutation region start (column 3): ' + mutation_region[2]]
+                        break
+
                     if mutation_region[1] <= 0 or mutation_region[2] <= 0 :
-                        self.errors += ['Mutation region ' + ' '.join(mutation_region.astype(str)) + ' starts before the reference sequence.']
-                    if mutation_region[1] > len(self.reference[mutation_region[0]].seq) or mutation_region[2] > len(self.reference[mutation_region[0]].seq) :
-                        self.errors += ['Mutation region ' + ' '.join(mutation_region.astype(str)) + ' ends after the reference sequence.']
+                        self.errors += [' '.join(['Mutation region',
+                                                  ' '.join(mutation_region.astype(str)),
+                                                  'starts before the reference sequence.'])]
+                    if mutation_region[1] > len(self.reference[mutation_region[0]].seq) or \
+                                                 mutation_region[2] > len(self.reference[mutation_region[0]].seq) :
+                        self.errors += [' '.join(['Mutation region',
+                                                  ' '.join(mutation_region.astype(str)),
+                                                  'ends after the reference sequence.'])]
         else :
             self.errors += ['Mutation region BED ' + self.mutation_region_bed + ' can\'t be found or is size 0.']
 
@@ -1160,21 +1340,27 @@ class Analysis :
             self.errors += ['Can\'t call mutations without a FAST5 or FASTQ dataset or assembly.']
 
         # If we have raw reads, we can call point mutations/indels
-        if (self.ont_fast5 or self.ont_fastq or self.illumina_fastq) :
+        if self.will_have_ont_fastq or self.illumina_fastq :
             self.analysis = self.analysis + ['call_amr_mutations']
             
-        for utility in ['minimap2', 'samtools', 'bcftools'] :
+        for utility in ['minimap2', 'samtools'] :
             self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
 
             command = utility + ' --version'
             self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
 
+        self.validate_utility('varscan', 'varscan is not on the PATH (required for AMR mutations)')
+        command = 'varscan 2>&1 | head -1'
+        self.versions['varscan'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
+                    
             
     @unless_only_basecall
     @unless_only_assemble
     def validate_draw_amr_matrix(self) :
 
-        # Really just making this a method for consistency
+        if not self.will_have_genome_fasta :
+            return
+        
         self.analysis += ['draw_amr_matrix']
 
         
@@ -1197,8 +1383,8 @@ class Analysis :
                 command = utility + ' --version 2>&1'
                 self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
             
-        if not self.validate_file_and_size(self.plasmid_database) :
-            self.errors += ['Can\'t find plasmid database ' + self.plasmid_database + ' or is size 0.  Try --download?']
+        if not self.validate_file_and_size(the_file = self.plasmid_database, min_size = 2000) :
+            self.errors += ['Can\'t find plasmid database ' + self.plasmid_database + ' or is empty.  Try --download?']
             
         if not self.will_have_genome_fasta :
             self.errors += ['Can\'t call plasmids without a genome or an assembly']
@@ -1221,14 +1407,17 @@ class Analysis :
 
     def validate_make_report(self) :
 
+        if self.no_report :
+            return
+        
         if len(self.analysis) == 0 :
             return
 
+        self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
+        
         if self.bundle :
             if not os.path.isdir(self.bundle) :
                 self.errors += ['Can\'t find Tectonic bundle ' + self.bundle]
-        
-        self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
         
         self.validate_utility('tectonic', 'tectonic is not on the PATH (required for reporting).')
         
@@ -1252,17 +1441,22 @@ class Analysis :
         
     def validate_options(self) :
 
+        self.validate_output_dir()
+        
         self.validate_ont_watch()
         self.validate_ont_fast5()
         self.validate_ont_fastq()
         
         self.validate_guppy()
-        
+
+        self.validate_multiplexed()
         self.validate_qcat()
 
-        self.validate_ont_fastq_info()
+        self.validate_info_given_ont_fastq()
         
         self.validate_lorma()
+
+        self.validate_contamination_check()
         
         self.validate_genome_fasta()
 
@@ -1273,7 +1467,6 @@ class Analysis :
         self.validate_racon()
         
         self.validate_medaka()
-        self.validate_nanopolish()
         
         self.validate_illumina_fastq()
         self.validate_pilon()
@@ -1285,23 +1478,25 @@ class Analysis :
 
         self.validate_features()
         self.validate_blast()
+
+        self.validate_reference_fasta()
+        self.validate_organism()
         self.validate_reference()
         self.validate_mutations()
+        
         self.validate_draw_amr_matrix()
         
         self.validate_plasmids()
         self.validate_draw_features()
         self.validate_make_report()
         
-        if len(self.analysis) == 0 :
+        if self.analysis == ['make_output_dir'] :
             if self.is_barcode :
                 return
             else :
                 self.errors = self.errors + ['Nothing to do!']
             
         self.analysis = self.analysis + ['clean_up']
-            
-        self.validate_output_dir()
             
         self.validate_download()
 
@@ -1319,6 +1514,8 @@ class Analysis :
 
         if os.path.isdir(self.output_dir) :
             shutil.rmtree(self.output_dir)
+        elif os.path.isfile(self.output_dir) :
+            os.remove(self.output_dir)
 
         os.mkdir(self.output_dir)
 
@@ -1330,6 +1527,7 @@ class Analysis :
         
         
     def start_logging(self):
+        
         self.logging_file = os.path.join(self.output_dir, 'log.txt')
         self.logging_handle = open(self.logging_file, 'w')
         
@@ -1339,139 +1537,272 @@ class Analysis :
         self.print_and_log('Watching ONT run in progress', self.main_process_verbosity, self.main_process_color)
 
         # Keep track of FAST5 files that have been basecalled
-        seen_fast5 = pandas.Series()
+        seen_fast5 = pd.Series(dtype = object)
         guppy_count = 0
-
+        
         # Where we will keep the guppy output of the FAST5 files
         self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
         os.makedirs(self.ont_fastq_dir)
         
-        watch_dir = os.path.join(self.ont_fastq_dir, 'watch')
-        os.makedirs(watch_dir) 
-    
-        # Loop until either 1) We have enough reads or 2) It's been long enough between FAST5 dumps
+        # And the intermediate files generated in the watching process
+        self.ont_watch_dir = os.path.join(self.ont_fastq_dir, 'watch')
+        os.makedirs(self.ont_watch_dir) 
+        
+        # Where we will stick the demultiplexed reads if we have multiplexed data
+        if self.multiplexed :
+            self.demultiplexed_dir = os.path.join(self.output_dir, 'demultiplex')
+            os.makedirs(self.demultiplexed_dir)
+            barcode_analyses = pd.Series(dtype = object) # Analyses retained across batches
+        else :
+            self.ont_raw_fastq = os.path.join(self.ont_fastq_dir, 'ont_raw.fastq')
+            self.ont_fastq = self.ont_raw_fastq
+            
+        # Loop until either 1) We have enough reads or 2) It's been long enough between FAST5 dumps, or 3) total time passed
         start_time = time.time()
         last_check_time = start_time
-
-        # Keep track of the new FASTQ files made so we can merge them later
-        new_fastq = []
-        
+            
+        # Look for new FAST5 files and basecall as they are found
         while (True) :
 
             # See the whole set of FAST5 files
             search_string = os.path.join(self.ont_watch, '*.fast5')
-            total_fast5 = pandas.Series(glob.glob(search_string))
+            total_fast5 = pd.Series(glob.glob(search_string))
 
             # See how much time has elapsed since the last check
             check_time = time.time()
             since_last_check_time = check_time - last_check_time
             total_time = check_time - start_time
             last_check_time = check_time   
-
-            # See if the total time has passed the allotted time
+                            
+            # See if the total time has passed the maximum allotted time
             if total_time >= self.ont_watch_time_max :
                 break
-
+                            
             # Get the set of new FAST5 files currently in the output directory
             new_fast5 = total_fast5[~total_fast5.isin(seen_fast5)]
-            seen_fast5 = total_fast5
-
-            # See if there are any new FAST5 files
+            seen_fast5 = total_fast5 # We have now seen all of the FAST5s
+                            
+            # See if there are any new FAST5 files, break if over max in-between time
             if len(new_fast5) == 0 :
                 if since_last_check_time >= self.ont_watch_between_max :
                     break
                 else :
                     continue
 
-            # If we do have new FAST5 files, make a directory to basecall them
-            fast5_dir = os.path.join(watch_dir, str(guppy_count))
-            os.makedirs(fast5_dir)
-            guppy_dir = os.path.join(fast5_dir, 'guppy')
-            os.makedirs(guppy_dir)
-    
+            self.print_and_log('Running batch of ' + str(len(new_fast5)) + ' FAST5(s)',
+                               self.sub_process_verbosity, self.sub_process_color)
+        
+            batch_dir = os.path.join(self.ont_watch_dir, str(guppy_count))
             # Link all of the FAST5 files into the new directory
-            for fast5 in new_fast5 :
+            self.link_ont_fast5(new_fast5, batch_dir)
+            batch_analysis = self.start_batch_analysis(batch_dir)
+                        
+            # Aggregate the information from this batch
+            ont_watch_summary = pd.DataFrame()
+            if self.multiplexed :
 
-                # Make a link for each FAST5 in the guppy directory
-                command = ' '.join(['ln -rs',
-                            fast5, fast5_dir])
-                self.print_and_run(command)
+                self.add_demultiplex_result(batch_analysis)
+
+                # Merge data from each barcode with prior data from that barcode
+                for barcode, barcode_analysis in batch_analysis.barcode_analyses.iteritems() :
+                    
+                    # Concatenate the basecalls with previous batches
+                    barcode_fastq = os.path.join(self.demultiplexed_dir, barcode + '.fastq')
+                    batch_barcode_fastq = os.path.join(barcode_analysis.demultiplexed_dir, barcode + '.fastq')
+                    self.concat_fastq(barcode_fastq, batch_barcode_fastq)
+
+                    # Update a prior analysis of this barcode if exists
+                    if barcode in barcode_analyses :
+                        barcode_analyses[barcode].add_analysis(barcode_analysis)                            
+                    else : # Otherwise, the current analysis is the barcode analysis
+                        barcode_analyses[barcode] = barcode_analysis
                 
-            # Basecall the new FAST5 files with guppy
-            guppy_stdout, guppy_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'guppy'))
-            command = ' '.join(['guppy_basecaller',
-                        '-i', fast5_dir,
-                        '-s', guppy_dir,
-                        '--compress-fastq',
-                        '--device "cuda:0"',
-                        '--flowcell FLO-MIN106 --kit SQK-RBK004',
-                        '1>' + guppy_stdout, '2>' + guppy_stderr])
-            self.print_and_run(command)
+                # Roll up the summary data for all barcodes
+                for barcode in self.barcodes :
+                    prior_barcode_analysis = barcode_analyses[barcode]
+                    barcode_row = pd.Series([barcode, 
+                                             prior_barcode_analysis.ont_read_count,
+                                             prior_barcode_analysis.n50_of_ont_reads()])
+                    barcode_row.index = pd.Series(['BC', 'Passing.Reads', 'BC.N50'])
+
+                    if self.contam_check :
+                        barcode_row = pd.concat([barcode_row, prior_barcode_analysis.kraken_fracs['ONT'].iloc[0,:]])
+
+                    barcode_row = pd.DataFrame(barcode_row).transpose()
+                    ont_watch_summary = pd.concat([ont_watch_summary, barcode_row])
+                        
+                ont_watch_summary.sort_index(inplace = True)
                 
-            # Keep track of all of the different FASTQ files produced
-            search_string = os.path.join(guppy_dir, '*.fastq')
-            merged_fastq = os.path.join(guppy_dir, 'ont_raw.fastq')
-            command = ' '.join(['cat', search_string, '>', merged_fastq])
-            self.print_and_run(command)
+            else :
+                self.add_analysis(batch_analysis)
+                self.concat_fastq(self.ont_raw_fastq,  batch_analysis.ont_raw_fastq)
+                ont_watch_row = pd.Series([self.ont_read_count,
+                                           self.n50_of_ont_reads()])
+                ont_watch_row.index = pd.Series(['Passing.Reads', 'N50'])
+                if self.contam_check :
+                    ont_watch_row = pd.concat([ont_watch_row, self.kraken_fracs['ONT'].iloc[0, :]])
+                ont_watch_row = pd.DataFrame(ont_watch_row).transpose()
+                ont_watch_summary = pd.concat([ont_watch_summary, ont_watch_row])
 
-            # Make sure the merged FASTQ file exists and has size > 0
-            self.validate_file_and_size_or_error(merged_fastq, 'ONT raw FASTQ file', 'cannot be found after guppy', 'is empty.')    
-            new_fastq += [merged_fastq]
-
-            # Keep track of files to clean up
-            search_string = os.path.join(guppy_dir, 'fastq*.fastq')
-            individual_fastq = glob.glob(search_string)
-            self.files_to_clean += individual_fastq
-
+            print(ont_watch_summary.to_string(index = False))
+                    
             # If we've passed the minimum number of reads then we stop here
-            total_reads = len(seen_fast5) * 1000
+            total_reads = ont_watch_summary['Passing.Reads'].sum()
             if total_reads >= self.ont_watch_reads_min :
                 break
 
             guppy_count += 1
             time.sleep(self.ont_watch_sleep_time)
-
+            
+        self.print_and_log('Done watching ONT run', self.sub_process_verbosity, self.sub_process_color)
+            
         # Make sure that we actually called some bases
         if len(seen_fast5) == 0 :
-            self.print_and_log('No reads were basecalled through --ont-watch.', 0, Colors.FAIL)
-            self.error_out()
+            self.error_out('No reads were basecalled through --ont-watch.')
 
-        # Merge the smaller FASTQ files
-        self.ont_raw_fastq = os.path.join(self.ont_fastq_dir, 'ont_raw.fastq')
-        command = ' '.join(['cat',
-                    ' '.join(new_fastq),
-                    '>', self.ont_raw_fastq])
+        # Make sure we clean up the watch directory
+        self.files_to_clean += [self.ont_watch_dir]
+
+        # TODO - Validate that the files were merged in the end
+        #self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file',
+        #                                     'cannot be found after merging', 'is empty.')
+
+        if self.multiplexed :
+            # Queue the barcode analyses
+            self.analysis = ['start_barcode_analysis', 'clean_up']
+
+        self.make_finish_file(self.ont_fastq_dir)
+        
+        self.did_guppy_ont_fast5 = True
+
+
+    def start_batch_analysis(self, batch_dir) :
+        
+        # Create a new mini-analysis to basecall/demux/contamination check these reads as required
+        batch_analysis = Analysis()
+        batch_analysis.output_dir = os.path.join(batch_dir, 'analysis')
+        batch_analysis.ont_fast5 = batch_dir
+        batch_analysis.only_basecall = True
+        batch_analysis.multiplexed = self.multiplexed
+        batch_analysis.contam_check = self.contam_check
+        batch_analysis.threads = self.threads
+        batch_analysis.no_report = True
+        batch_analysis.verbosity = 0
+        batch_analysis.barcode_min_fraction = 0.00001
+        batch_analysis.validate_options()
+        batch_analysis.go()
+        return(batch_analysis)
+
+    def concat_fastq(self, old_fastq, new_fastq) :
+        
+        command = ' '.join(['cat', new_fastq, '>>', old_fastq])
         self.print_and_run(command)
-        self.files_to_clean += new_fastq
 
-        self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after merging', 'is empty.')
-        self.ont_fastq = self.ont_raw_fastq
+        
+    def link_ont_fast5(self, fast5, destination) :
 
-        method = 'ONT reads were basecalled using guppy (v ' + self.versions['guppy'] + ').'
-        self.report[self.methods_title][self.basecalling_methods] = \
-            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
+        if not os.path.isdir(destination) :
+            os.makedirs(destination)
+        for i in fast5 :
+            # Make a link for each FAST5 in the guppy directory
+            command = ' '.join(['ln -rs', i, destination])
+            self.print_and_run(command)
+
+
+    def add_analysis(self, new_analysis = None) :
+
+        if not self.multiplexed :
+            if not new_analysis.ont_read_count is None :
+                if self.ont_read_lengths is None :
+                    self.ont_read_lengths = new_analysis.ont_read_lengths
+                else :
+                    self.ont_read_lengths = self.ont_read_lengths + new_analysis.ont_read_lengths
+            self.ont_read_count = len(self.ont_read_lengths)
         
-        
-    def guppy_ont_fast5(self) :
-        
+        # Update the Kraken table for this barcode
+        self.add_kraken_result(new_analysis)
+        self.add_demultiplex_result(new_analysis)
+
+
+    def add_kraken_result(self, new_analysis = None) :
+
+        if not self.contam_check :
+            return
+
+        if new_analysis is None :
+            self.error_out('New analysis was none in add_kraken_result')
+
+        ## Add in a new set of kraken results to our current set
+        for read_type, new_fracs in new_analysis.kraken_fracs.iteritems() :
+            if not read_type in self.kraken_fracs :
+                self.kraken_fracs[read_type] = new_fracs
+            else :
+                old_fracs = self.kraken_fracs[read_type]
+                new_taxa = new_fracs.index.difference(old_fracs.index)
+                old_taxa = new_fracs.index.intersection(old_fracs.index)
+                if len(old_taxa) > 0 :
+                    old_fracs.loc[:, 'Reads'] += new_fracs.loc[old_taxa, 'Reads']
+                if len(new_taxa) > 0 :
+                    old_fracs = pd.concat([old_fracs, new_fracs.loc[new_taxa, :]], axis = 0)
+                old_fracs.sort_values(by = 'Fraction', inplace = True)
+                ## Update this so that it pulls for each read type
+                old_fracs.loc['Fraction'] = (old_fracs['Reads'] / self.ont_read_count).round(4)
+                old_fracs.sort_values(by = 'Fraction', inplace = True, ascending = False)
+                self.kraken_fracs[read_type] = old_fracs
+
+
+    def add_demultiplex_result(self, new_analysis = None) :
+
+        if not self.multiplexed :
+            return
+
+        if new_analysis is None :
+            self.error_out('New analysis was none in add_demultiplex_result')
+
+        ## Add in a new demultiplexing result
+        if self.barcode_summary is None :
+            self.barcode_summary = new_analysis.barcode_summary
+        else :
+            new_barcodes = new_analysis.barcode_summary.index.difference(self.barcode_summary.index)
+            old_barcodes = new_analysis.barcode_summary.index.intersection(self.barcode_summary.index)
+            if len(old_barcodes) > 0 :
+                self.barcode_summary.loc[old_barcodes, 'Count'] += new_analysis.barcode_summary.loc[old_barcodes, 'Count']
+            if len(new_barcodes) > 0 :
+                self.barcode_summary = pd.concat([self.barcode_summary, new_analysis.barcode_summary.loc[new_barcodes, :]], axis = 0)
+                self.barcode_summary.sort_index(inplace = True)
+
+        self.barcodes = self.barcode_summary.index.to_series()
+
+
+    def guppy_given_ont_fast5(self) :
+
         self.print_and_log('Basecalling ONT reads with Guppy', self.main_process_verbosity, self.main_process_color)        
         
-        # Make the directory for new FASTQ files
-        self.print_and_log('Running Guppy on raw ONT FAST5', self.sub_process_verbosity, self.sub_process_color)
         self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
-        os.makedirs(self.ont_fastq_dir)
-        self.make_start_file(self.ont_fastq_dir)
+
+        self.ont_raw_fastq = self.guppy_ont_fast5(self.ont_fast5, self.ont_fastq_dir)
+        self.ont_fastq = self.ont_raw_fastq
+
+        self.did_guppy_ont_fast5 = True
+        
+        
+    def guppy_ont_fast5(self, ont_fast5, ont_fastq_dir) :
+
+        self.print_and_log('Running Guppy on raw ONT FAST5', self.sub_process_verbosity, self.sub_process_color)
+        
+        # Make the directory for new FASTQ files
+        os.makedirs(ont_fastq_dir)
+        self.make_start_file(ont_fastq_dir)
                     
-        guppy_stdout, guppy_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'guppy'))
+        guppy_stdout, guppy_stderr = self.std_files(os.path.join(ont_fastq_dir, 'guppy'))
         
         # Run the basecalling with Guppy
         command = ' '.join(['guppy_basecaller',
-                    '-i', self.ont_fast5,
+                    '-i', ont_fast5,
                     '-r',
-                    '-s', self.ont_fastq_dir,
+                    '-s', ont_fastq_dir,
                     '--num_callers 14',
                     '--gpu_runners_per_device 8',
-                    '--compress-fastq',
                     '--device "cuda:0"',
                     '--fast5_out',
                     '--flowcell FLO-MIN106 --kit SQK-RBK004',
@@ -1480,23 +1811,20 @@ class Analysis :
 
         # Merge the smaller FASTQ files
         self.print_and_log('Merging Guppy runs into raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
-        self.ont_raw_fastq = os.path.join(self.ont_fastq_dir, 'ont_raw.fastq')
-        command = ' '.join(['cat', self.ont_fastq_dir + '/*.fastq >', self.ont_raw_fastq])
+        ont_raw_fastq = os.path.join(ont_fastq_dir, 'ont_raw.fastq')
+        command = ' '.join(['cat', ont_fastq_dir + '/*.fastq >', ont_raw_fastq])
         self.print_and_run(command)
 
         # Make sure the merged FASTQ file exists and has size > 0
-        self.validate_file_and_size_or_error(self.ont_raw_fastq, 'ONT raw FASTQ file', 'cannot be found after albacore', 'is empty')
+        self.validate_file_and_size_or_error(ont_raw_fastq, 'ONT raw FASTQ file',
+                                             'cannot be found after guppy', 'is empty')
+        
+        self.make_finish_file(ont_fastq_dir)
 
-        self.ont_fastq = self.ont_raw_fastq
-
-        method = 'ONT reads were basecalled using guppy (v ' + self.versions['guppy'] + ').'
-        self.report[self.methods_title][self.basecalling_methods] = \
-            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
-
-        self.make_finish_file(self.ont_fastq_dir)
+        return(ont_raw_fastq)
         
 
-    def qcat_ont_fastq(self) :
+    def qcat_given_ont_fastq(self) :
 
         self.print_and_log('Demultiplexing and trimming reads with qcat', self.main_process_verbosity, self.main_process_color)
         
@@ -1510,58 +1838,82 @@ class Analysis :
             qcat_input_fastq = self.ont_raw_fastq
         else :
             qcat_input_fastq = self.ont_fastq
-            
+
+        self.barcode_summary = self.qcat_ont_fastq(qcat_input_fastq, self.demultiplexed_dir)
+        self.barcode_summary = self.barcode_summary.loc[self.barcode_summary.loc[:, 'Fraction'] >= self.barcode_min_fraction, :] 
+        self.barcodes = self.barcode_summary.index.to_series()
+
+        # Queue the barcode analyses
+        self.analysis = ['start_barcode_analysis', 'clean_up']
+
+        
+    def qcat_ont_fastq(self, ont_fastq, demultiplexed_dir) :
+
+        if not os.path.isdir(demultiplexed_dir) :
+            os.makedirs(demultiplexed_dir)
+
+        # TODO -- do we need to handle different kits?
         self.print_and_log('Running qcat on raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
-        qcat_stdout, qcat_stderr = self.std_files(os.path.join(self.demultiplexed_dir, 'qcat'))
+        qcat_stdout, qcat_stderr = self.std_files(os.path.join(demultiplexed_dir, 'qcat'))
         command = ' '.join(['qcat',
                             '--trim',
                             '--guppy',
                             '--min-score 65',
                             '--kit RBK004',
-                            '-t', str(self.threads),
-                            '-f', qcat_input_fastq,
-                            '-b', self.demultiplexed_dir,
+                            '-f', ont_fastq,
+                            '-b', demultiplexed_dir,
                             '1>' + qcat_stdout, '2>' + qcat_stderr])
         self.print_and_run(command)
 
-        # Figure out if we need to run multiple analyses, i.e, we have multiple barcodes
+        # Generate the BC summary for this FASTQ file
         barcode_summary_tsv = os.path.join(self.demultiplexed_dir, 'barcode_summary.tsv')
         command = ' '.join(['cat',
-                           qcat_stderr,
-                           '| grep -E \'barcode[0-9]+\'',
-                            '|awk \'{OFS="\\t"; print $1,$2,$(NF - 1)}\'',
-                           '>' + barcode_summary_tsv])
+                            qcat_stderr,
+                            '| grep -E \'(none)|(barcode[0-9]+)\' | sort | uniq',
+                            '|awk \'BEGIN{OFS="\\t";print "Count\\tFraction"}{sub(/:/, "", $2);print $1,$2,$(NF - 1)/100}\'',
+                            '>' + barcode_summary_tsv])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(barcode_summary_tsv, 'Barcode summary', 'cannot be found after qcat', 'is empty')
+        self.validate_file_and_size_or_error(barcode_summary_tsv, 'Barcode summary',
+                                             'cannot be found after qcat', 'is empty', min_size = 20)
 
-        self.barcode_summary = pandas.read_csv(filepath_or_buffer = barcode_summary_tsv, sep = '\t', header = None)
-        self.barcode_summary = self.barcode_summary.loc[self.barcode_summary.iloc[:, 2] >= self.barcode_min_fraction, :] 
-        self.barcodes = self.barcode_summary.iloc[:, 0].values
+        barcode_summary = pd.read_csv(filepath_or_buffer = barcode_summary_tsv, sep = '\t', header = 0, index_col = 0)
         
-        method = 'ONT reads were demultiplexed and trimmed using qcat (v ' + self.versions['qcat'] + ').'
-        self.report[self.methods_title][self.basecalling_methods] = \
-            self.report[self.methods_title][self.basecalling_methods].append(pandas.Series(method))
-        
-        # In the case of a single barcode just go on as normal, otherwise, make an Analysis for each barcode.
-        if len(self.barcodes) == 1 or not self.multiplexed :
-            self.ont_fastq = os.path.join(self.demultiplexed_dir, self.barcode_summary.iloc[0,0] + '.fastq')
-        elif not self.only_basecall :
-            self.analysis = ['start_barcode_analysis', 'clean_up']
+        return(barcode_summary)
 
-        self.make_finish_file(self.demultiplexed_dir)
 
+    def n50_of_ont_reads(self) :
+
+        if self.ont_read_lengths is None :
+            self.error_out('No ONT reads to get N50 of')
+        if len(self.ont_read_lengths) == 0 :
+            self.error_out('List of ONT reads is length 0')
+            
+        sorted_lengths = self.ont_read_lengths
+        sorted_lengths.sort()
+        all_bases = sum(sorted_lengths)
+        cum_sum_bases = pd.Series(np.cumsum(sorted_lengths))
+        cum_sum_bases = cum_sum_bases[cum_sum_bases < all_bases / 2]
+        return(sorted_lengths[len(cum_sum_bases) - 1])
+    
         
     def start_barcode_analysis(self) :
 
-        self.print_and_log('Starting analysis of individual barcodes.', self.main_process_verbosity, self.main_process_color)
+        # Keep track of each barcode's analysis
+        self.barcode_analyses = pd.Series(dtype = object)
         
+        self.print_and_log('Starting analysis of individual barcodes.', self.main_process_verbosity, self.main_process_color)
+
+        # TODO - clean up this deepcopy stuff? How? Are you just biased against deepcopy?
         for barcode in self.barcodes :
+            self.print_and_log('Starting analysis of ' + barcode, self.main_process_verbosity, self.main_process_color)
             barcode_analysis = copy.deepcopy(self)
+            self.barcode_analyses[barcode] = barcode_analysis
             barcode_analysis.analysis = []
             barcode_analysis.multiplexed = False
             barcode_analysis.output_dir = os.path.join(self.output_dir, barcode)
             barcode_analysis.ont_fastq = os.path.join(self.demultiplexed_dir, barcode + '.fastq')
             barcode_analysis.is_barcode = True
+            barcode_analysis.no_report = self.no_report
             barcode_analysis.files_to_clean = []
             barcode_analysis.validate_options()
             barcode_analysis.feature_fastas = self.feature_fastas
@@ -1569,37 +1921,56 @@ class Analysis :
                 barcode_analysis.go()
 
 
-    def ont_fastq_info(self) :
+    def info_given_ont_fastq(self) :
 
+        self.ont_n50, self.ont_read_count, self.ont_raw_bases, self.ont_read_lengths =  self.info_ont_fastq(self.ont_fastq)
+        self.ont_bases = format_kmg(self.ont_raw_bases, decimals = 1)
+                
+        if self.ont_n50 <= self.ont_n50_min :
+            warning = 'ONT N50 (' + str(self.ont_n50) + ') is less than the recommended minimum (' + str(self.ont_n50_min) + ').'
+            self.add_warning(warning)
+            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+            
+        # See if we sould downsample the ONT FASTQ file
+        if not self.genome_assembly_raw_size is None :
+            present_coverage = self.ont_raw_bases / self.genome_assembly_raw_size
+            if present_coverage >= self.assembly_coverage + 1 :
+                self.downsample_ont_fastq()
+            
+        
+    def info_ont_fastq(self, fastq = None) :
+
+        self.print_and_log('Getting ONT FASTQ info', self.main_process_verbosity, self.main_process_color)
+        
         opener = 'cat'
-        if (re.search('\.(gz|gzip)$', self.ont_fastq)) :
+        if (re.search('\\.(gz|gzip)$', fastq)) :
             opener = 'gunzip -c'
             
         command = ' '.join([opener,
-                            self.ont_fastq,
+                            fastq,
                             '| awk \'{getline;print length($0);s += length($1);getline;getline;}END{print "+"s}\'',
                             '| sort -gr',
                             '| awk \'BEGIN{bp = 0;f = 0}',
                             '{if(NR == 1){sub("+", "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
-                            'END{print n50"\t"NR"\t"s;exit}\''])
-        self.ont_n50, self.ont_read_count, self.ont_raw_bases = [int(i) for i in re.split('\\t', self.print_and_run(command)[0])]
-        self.ont_bases = format_kmg(self.ont_raw_bases, decimals = 1)
+                            'END{print n50"\t"(NR - 1)"\t"s;exit}\''])
+        result = list(re.split('\\t', self.print_and_run(command)[0]))
+        if result[1] == '0' :
+            self.error_out('No ONT reads found')
+        ont_n50, ont_read_count, ont_raw_bases = [int(i) for i in result]
 
-        if self.ont_n50 <= self.ont_n50_min :
-            warning = 'ONT N50 (' + str(self.ont_n50) + ') is less than the recommended minimum (' + str(self.ont_n50_min) + ').'
-            self.add_warning(warning)
-            self.report[self.assembly_title][self.assembly_notes_title] = \
-                self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+        command = ' '.join([opener,
+                            fastq,
+                            '| awk \'{getline;print length($0);getline;getline;}\''])
+        result = self.print_and_run(command)
+        result = list(filter(lambda x: x != '', result)) 
+        ont_read_lengths = [int(i) for i in result]
 
-        # See if we sould downsample the ONT FASTQ file
-        present_coverage = self.ont_raw_bases / self.genome_assembly_raw_size
-        if present_coverage >= self.assembly_coverage + 1 :
-            self.downsample_ont_fastq()
-
-            
+        return([ont_n50, ont_read_count, ont_raw_bases, ont_read_lengths])
+        
+ 
     def downsample_ont_fastq(self) :
 
-        self.print_and_log(' '.join(['Downsampling to', str(self.assembly_coverage) + 'X', 'coverage']),
+        self.print_and_log(' '.join(['Downsampling ONT data to', str(self.assembly_coverage) + 'X', 'coverage']),
                            self.sub_process_verbosity, self.sub_process_color)
 
         self.downsample_dir = os.path.join(self.output_dir, 'downsample')
@@ -1629,18 +2000,19 @@ class Analysis :
         self.ont_fastq = downsampled_fastq
 
 
+    def info_illumina_fastq(self) :
 
-    def illumina_fastq_info(self) :
+        self.print_and_log('Getting Illumina FASTQ info', self.main_process_verbosity, self.main_process_color)
 
         self.illumina_length_mean, self.illumina_read_count, self.illumina_bases = 0,0,0
         opener = 'cat'
-        if re.search('\.(gz|gzip)$', self.illumina_fastq[0]) :
+        if re.search('\\.(gz|gzip)$', self.illumina_fastq[0]) :
             opener = 'gunzip -c'
         for r in range(len(self.illumina_fastq)) :
             r_fastq = self.illumina_fastq[r]
             command = ' '.join([opener,
                                 r_fastq,
-                                '| awk \'{getline;s += length($1);getline;getline;}END{print s/NR"\t"NR"\t"s}\''])
+                                '| awk \'{getline;s += length($1);getline;getline;}END{print s/(NR/4)"\t"(NR/4)"\t"s}\''])
             values = [float(i) for i in re.split('\\t', self.print_and_run(command)[0])]
             self.illumina_length_mean += values[0]
             self.illumina_read_count += int(values[1])
@@ -1648,10 +2020,73 @@ class Analysis :
         self.illumina_length_mean /= len(self.illumina_fastq)
         self.illumina_bases = format_kmg(self.illumina_bases, decimals = 1)
 
+
+    def fastq_contamination(self) :
+
+        self.print_and_log('Running Kraken2 to check for contamination', self.main_process_verbosity, self.main_process_color)
+
+        self.kraken_dir = os.path.join(self.output_dir, 'contamination')
+        os.makedirs(self.kraken_dir)
+        self.make_start_file(self.kraken_dir)
+
+        if not (self.ont_fastq is None) :
+            self.print_and_log('Running Kraken2 on ONT data', self.sub_process_verbosity, self.sub_process_color)
+            ont_kraken_dir = os.path.join(self.kraken_dir, 'ont')
+            self.kraken_fracs['ONT'] = self.kraken_fastq(self.ont_fastq, ont_kraken_dir)
+
+        if not (self.illumina_fastq is None) :
+            self.print_and_log('Running Kraken2 on Illumina data', self.sub_process_verbosity, self.sub_process_color)
+            illumina_kraken_dir = os.path.join(self.kraken_dir, 'illumina')
+            self.kraken_fracs['Illumina'] = self.kraken_fastq(self.illumina_fastq, illumina_kraken_dir)
+
+        self.did_kraken_fastq = True
+        self.make_finish_file(self.kraken_dir)
+
             
+    def kraken_fastq(self, fastq, fastq_dir) :
+
+        os.makedirs(fastq_dir)
+        
+        kraken_files = [os.path.join(fastq_dir, 'kraken.' + i) for i in ['report', 'out', 'class', 'unclass']]        
+        kraken_report, kraken_out, kraken_class, kraken_unclass = kraken_files
+        kraken_stdout, kraken_stderr = self.std_files(os.path.join(self.kraken_dir, 'kraken'))
+
+        fastq_arg = fastq
+        if isinstance(fastq, list) :
+            fastq_arg = ' '.join(fastq)
+
+        command = ' '.join(['kraken2',
+                            '--threads', str(self.threads),
+                            '--report', kraken_report,
+                            '--out', kraken_out,
+                            '--class', kraken_class,
+                            '--unclass', kraken_unclass,
+                            '--db', self.kraken_database,
+                            fastq_arg,
+                            '1>' + kraken_stdout, '2>' + kraken_stderr])
+        self.print_and_run(command)
+
+        [self.validate_file_and_size_or_error(i, i + ' missing after Kraken2', i + ' file is size 0 after Kraken2', )
+         for i in kraken_files]
+
+        # Read in the Kraken fractions and pull out the useful parts
+        kraken_fracs = pd.read_csv(kraken_report, delimiter = '\t', header = None)
+        kraken_fracs.index = kraken_fracs.iloc[:, 4].values
+        kraken_fracs = kraken_fracs.loc[kraken_fracs.iloc[:, 3].str.match('[UG]1?'), :]
+        kraken_fracs = kraken_fracs.loc[(kraken_fracs.iloc[:, 0] >= 1) | (kraken_fracs.iloc[:, 3] == 'U'), :]
+        kraken_fracs = kraken_fracs.iloc[:, [0, 1, 3, 5]]
+        kraken_fracs.columns = ['Fraction', 'Reads', 'Level', 'Taxa']
+        kraken_fracs['Fraction'] = (kraken_fracs['Fraction'] / 100).round(4)
+        kraken_fracs.sort_values(by = 'Fraction', inplace = True, ascending = False)
+        kraken_fracs['Taxa'] = kraken_fracs['Taxa'].str.lstrip()
+
+        return(kraken_fracs)
+
+        
     def lorma_ont_fastq(self) :
 
-        self.print_and_log('Using lordec-correct to error-correct ONT reads', self.main_process_verbosity, self.main_process_color)
+        self.print_and_log('Using lordec-correct to error-correct ONT reads',
+                           self.main_process_verbosity, self.main_process_color)
 
         if not self.ont_fastq_dir :
             self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
@@ -1684,53 +2119,6 @@ class Analysis :
         self.validate_file_and_size_or_error(lorma_fasta, 'LoRMA FASTQ', 'cannot be found after FASTQ conversion', 'is empty')
 
         self.ont_fastq = lorma_fastq
-
-        
-    def miniasm_ont_fastq(self) :
-
-        self.print_and_log('Assembling ONT reads using minimap2/miniasm', self.main_process_verbosity, self.main_process_color)
-
-        # Make the directory for new assembly files
-        self.ont_assembly_dir = os.path.join(self.output_dir, 'ont_assembly')
-        os.makedirs(self.ont_assembly_dir)
-        self.make_start_file(self.ont_assembly_dir)
-
-        # Use mimimap2 to generate an all v. all comparison of the ONT reads
-        self.print_and_log('Running minimap2 in all v. all mode', self.sub_process_verbosity, self.sub_process_color)
-        self.ont_ava_paf = os.path.join(self.ont_assembly_dir, 'ont_vs_ont.paf')
-        stderr_file = os.path.join(self.ont_assembly_dir, 'minimap_ava.stderr')
-        command = ' '.join(['minimap2 -x ava-ont',
-                            '-t', str(self.threads),
-                            self.ont_fastq, self.ont_fastq,
-                            '1>' + self.ont_ava_paf,
-                            '2>' + stderr_file])
-        self.print_and_run(command)
-
-        # Check for minimap output
-        self.validate_file_and_size_or_error(self.ont_ava_paf, 'ONT all v. all PAF', 'cannot be found after minimap2', 'is empty')
-
-        # Use miniasm to generate a draft assembly from the all v. all comparison
-        self.print_and_log('Running miniasm', self.sub_process_verbosity, self.sub_process_color)
-        self.ont_miniasm_gfa = os.path.join(self.ont_assembly_dir, 'ont_miniasm.gfa')
-        stderr_file = os.path.join(self.ont_assembly_dir, 'miniasm.stderr')
-        command = ' '.join(['miniasm -s 1750 -h 1000 -I .5',
-                            '-f ', self.ont_fastq,
-                            self.ont_ava_paf,
-                            '1>' + self.ont_miniasm_gfa,
-                            '2>' + stderr_file])
-        self.print_and_run(command)
-        self.validate_file_and_size_or_error(self.ont_miniasm_gfa, 'ONT miniasm GFA', 'cannot be found after miniasm', 'is empty')
-
-        # Turn it into a FASTA file
-        self.print_and_log('Converting miniasm assembly to FASTA', self.sub_process_verbosity, self.sub_process_color)
-        self.ont_miniasm_fasta = os.path.join(self.ont_assembly_dir, 'ont_miniasm.fasta')
-        command = ' '.join(['awk \'/^S/{print ">"$2"\\n"$3}\'', self.ont_miniasm_gfa,
-                            '| fold >', self.ont_miniasm_fasta])
-        self.genome_fasta = self.ont_miniasm_fasta
-        self.print_and_run(command)
-        self.validate_file_and_size_or_error(self.genome_fasta, 'ONT miniasm FASTA', 'cannot be found after miniasm', 'is empty')
-
-        self.make_finish_file(self.ont_assembly_dir)
 
         
     def wtdbg2_ont_fastq(self) :
@@ -1768,7 +2156,8 @@ class Analysis :
                             '1>', wtdbg2_stdout,
                             '2>', wtdbg2_stderr])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(self.genome_fasta, 'WTDBG2 assembly fasta', 'cannot be found after miniasm', 'is empty')
+        self.validate_file_and_size_or_error(self.genome_fasta, 'WTDBG2 assembly fasta',
+                                             'cannot be found after wtpoa-cns', 'is empty')
 
         self.make_finish_file(self.ont_assembly_dir)
         
@@ -1806,26 +2195,26 @@ class Analysis :
         self.validate_file_and_size_or_error(flye_fasta, 'Flye fasta', 'cannot be found after flye', 'is empty')
 
         self.genome_fasta = self.ont_assembly_dir + '/assembly.fasta'
-        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome fasta', 'cannot be found after copying Flye output', 'is empty')
+        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome fasta',
+                                             'cannot be found after copying Flye output', 'is empty')
         self.load_genome()
 
         # Pull in the assembly summary and look at the coverage
         assembly_info_txt = os.path.join(self.ont_assembly_dir, 'assembly_info.txt')
-        assembly_info = pandas.read_csv(assembly_info_txt, header = 0, index_col = 0, sep = '\t')
-
-        method = 'ONT reads were assembled using Flye (v ' + self.versions['flye'] + ').'
-        self.report[self.methods_title][self.assembly_methods] = \
-            self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
+        assembly_info = pd.read_csv(assembly_info_txt, header = 0, index_col = 0, sep = '\t')
 
         # Look for non-circular contigs
         open_contigs = assembly_info.loc[assembly_info['circ.'] == 'N', :]
         if open_contigs.shape[0] > 0 :
             open_contig_ids = open_contigs.index.values
-            warning = 'Flye reported {:d} open contigs ({:s}); assembly may be incomplete.'.format(open_contigs.shape[0], ', '.join(open_contig_ids))
+            warning = 'Flye reported {:d} open contigs ({:s}); assembly may be incomplete.'.\
+                format(open_contigs.shape[0], ', '.join(open_contig_ids))
             self.add_warning(warning)
-            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
         
         self.make_finish_file(self.ont_assembly_dir)
+
+        self.did_flye_ont_fastq = True
 
         
     def racon_ont_assembly(self) :
@@ -1853,7 +2242,8 @@ class Analysis :
                                 '1>' + ont_rva_paf_i,
                                 '2>' + stderr_file])
             self.print_and_run(command)
-            self.validate_file_and_size_or_error(ont_rva_paf_i, 'ONT reads v. assembly PAF', 'cannot be found after minimap2', 'is empty')
+            self.validate_file_and_size_or_error(ont_rva_paf_i, 'ONT reads v. assembly PAF', \
+                                                 'cannot be found after minimap2', 'is empty')
 
             # Run racon for round 1
             self.print_and_log('Running racon round' + str(i), self.sub_process_verbosity, self.sub_process_color)
@@ -1866,7 +2256,8 @@ class Analysis :
                                 '1>' + ont_racon_fasta_i,
                                 '2>' + stderr_file])
             self.print_and_run(command)
-            self.validate_file_and_size_or_error(ont_racon_fasta_i, 'ONT racon assembly', 'cannot be found after racon', 'is empty')
+            self.validate_file_and_size_or_error(ont_racon_fasta_i, 'ONT racon assembly', \
+                                                 'cannot be found after racon', 'is empty')
 
             input_assembly = ont_racon_fasta_i
 
@@ -1877,7 +2268,8 @@ class Analysis :
         command = ' '.join(['cat', input_assembly,
                             '| awk \'{if($0 ~ /^>/){gsub(":.*", "", $0)}print}\' >', self.genome_fasta])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
+        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', \
+                                             'cannot be found after fixing names', 'is empty')
 
         self.load_genome()
 
@@ -1892,17 +2284,17 @@ class Analysis :
         os.makedirs(self.medaka_dir)
         self.make_start_file(self.medaka_dir)
 
-        # See if we need to downsample the reads
+        # TODO See if we need to downsample the reads
         #if self.medaka_downsample_reads :
             
-        
         # Actually run Medaka
+        # TODO - Find the right Medaka model
         self.print_and_log('Starting medaka', self.sub_process_verbosity, self.sub_process_color)
         self.medaka_fasta = os.path.join(self.medaka_dir, 'consensus.fasta')
         medaka_stdout, medaka_stderr = self.std_files(os.path.join(self.medaka_dir, 'medaka'))
         command = ' '.join(['medaka_consensus',
                             '-m', 'r941_min_high_g360',
-                            '-i', self.ont_raw_fastq,
+                            '-i', self.ont_fastq,
                             '-d', self.genome_fasta,
                             '-o', self.medaka_dir,
                             '-t', str(self.threads),
@@ -1919,139 +2311,15 @@ class Analysis :
                             '| awk \'{if($0 ~ /^>/){gsub(":.*", "", $0);gsub("_segment", "_", $0)}print}\'',
                             '>', self.genome_fasta])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
+        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', \
+                                             'cannot be found after fixing names', 'is empty')
         
         self.load_genome()
-
-        method = 'The genome assembly was polished using ONT reads and Medaka (v ' + self.versions['medaka'] + ').'
-        self.report[self.methods_title][self.assembly_methods] = \
-            self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
         
         self.make_finish_file(self.medaka_dir)
 
+        self.did_medaka_ont_assembly = True
         
-    def nanopolish_ont_assembly(self) :
-
-        self.print_and_log('Running Nanopolish on ONT assembly', self.main_process_verbosity, self.main_process_color)
-        if not self.ont_fastq and self.ont_fast5 :
-            self.print_and_log('Need both ONT FAST5 and ONT FASTQ data to run Nanopolish', 0, self.error_color)
-
-        self.nanopolish_dir = os.path.join(self.output_dir, 'nanopolish')
-        os.makedirs(self.nanopolish_dir)
-
-        # Map the ONT reads against the genome
-        self.print_and_log('Mapping ONT reads to the genome assembly', self.sub_process_verbosity, self.sub_process_color)
-        self.nanopolish_bam = os.path.join(self.nanopolish_dir, 'minimap.bam')
-        self.minimap_ont_fastq(self.genome_fasta, self.ont_fastq, self.nanopolish_bam)
-        self.index_bam(self.nanopolish_bam)
-        
-        # Find the coverage of each contig to see if we need to downsample
-        coverage_file = os.path.join(self.nanopolish_dir, 'contig_coverage.tsv')
-        command = ' '.join(['samtools depth', self.nanopolish_bam,
-                            '| awk \'{bp[$1]++;c[$1] += $3}END{OFS="\t";for(i in bp){print i,c[i]/bp[i]}}\'',
-                            '>', coverage_file])
-        self.print_and_run(command)
-        coverage = pandas.read_table(filepath_or_buffer = coverage_file, header = None, index_col = 0)
-        coverage.columns = ['coverage']
-        
-        # If any need to be downsampled, just do them all
-        if (coverage.iloc[:,0] > self.nanopolish_coverage_max * 1.25).any() :
-            contig_bams = []
-            for contig in coverage.index.values :
-                contig_bam = os.path.join(self.nanopolish_dir, contig + '.bam')
-                contig_bams +=  [contig_bam]
-                downsampling_fraction = self.nanopolish_coverage_max / coverage.loc[contig,'coverage']
-                if downsampling_fraction > 1 :
-                    downsampling_fraction = 1
-                command = ' '.join(['samtools view -b',
-                                    '-s', str(float(downsampling_fraction)),
-                                    self.nanopolish_bam,
-                                    '"' + contig + '"',
-                                    '>', contig_bam])
-                self.print_and_run(command)
-
-            # Merge the resulting bams
-            downsampled_bam = os.path.join(self.nanopolish_dir, 'downsampled.bam')
-            if (len(contig_bams) > 1) :
-                command = ' '.join(['samtools merge',
-                                    downsampled_bam,
-                                    ' '.join(contig_bams)])
-                self.print_and_run(command)
-            else :
-                command = ' '.join(['cp', contig_bams[0], downsampled_bam])
-                self.print_and_run(command)
-                
-            self.nanopolish_bam = downsampled_bam
-            self.index_bam(self.nanopolish_bam)
-
-            
-        # Index the FAST5 data
-        self.print_and_log('Indexing FAST5 data', self.sub_process_verbosity, self.sub_process_color)
-        index_stdout, index_stderr = [os.path.join(self.nanopolish_dir, 'index.' + i) for i in ['stdout', 'stderr']]
-        if self.albacore_seq_files_file is None :
-            # Find the Albacore sequencing files
-            search_string = os.path.join(self.ont_fastq_dir, '*', 'sequencing_summary.txt')
-            albacore_seq_files = glob.glob(search_string)
-            self.albacore_seq_files = pandas.DataFrame(albacore_seq_files)
-            self.albacore_seq_files_file = os.path.join(self.ont_fastq_dir, 'albacore_seq_files.txt')
-            self.albacore_seq_files.to_csv(path_or_buf = self.albacore_seq_files_file, header = False, index = False)
-        command = ' '.join(['nanopolish index',
-                            '-d', self.ont_fast5,
-                            '-f', self.albacore_seq_files_file,
-                            self.ont_fastq,
-                            '1>' + index_stdout,
-                            '2>' + index_stderr])
-        self.print_and_run(command)
-
-        self.nanopolish_prefix = os.path.join(self.nanopolish_dir, 'nanopolish')
-        
-        # Collect the list of ranges that Nanopolish will work on
-        nanopolish_ranges_file = self.nanopolish_prefix + '_ranges.txt'
-        command = ' '.join(['nanopolish_makerange.py', self.genome_fasta, '>', nanopolish_ranges_file])
-        self.print_and_run(command)
-        nanopolish_ranges = pandas.read_table(filepath_or_buffer = nanopolish_ranges_file, header = None).iloc[:,0].values
-
-        # Run the ranges in parallel
-        self.nanopolish_stdout, self.nanopolish_stderr = [os.path.join(self.nanopolish_dir, 'nanopolish.' + i) for i in ['stdout', 'stderr']]
-        pool = mp.Pool(processes = self.threads)
-        results = pool.map(self.run_nanopolish_range, nanopolish_ranges)
-
-
-        # Merget the nanopolish results
-        self.print_and_log('Merging Nanopolish results', self.sub_process_verbosity, self.sub_process_color)
-        self.nanopolish_fasta = os.path.join(self.nanopolish_dir, 'assembly.fasta')
-        command = ' '.join(['nanopolish vcf2fasta',
-                            '-g', self.genome_fasta,
-                            self.nanopolish_prefix + '.*.vcf',
-                            '1>' + self.nanopolish_fasta])
-        self.print_and_run(command)
-        self.validate_file_and_size_or_error(self.nanopolish_fasta, 'Nanpolish FASTA', 'cannot be found after samtools', 'is empty')
-        self.genome_fasta = self.nanopolish_fasta
-
-        self.load_genome()
-        
-
-    def run_nanopolish_range(self, nanopolish_range) :
-        
-        print(nanopolish_range)
-        nanopolish_vcf = self.nanopolish_prefix + '.' + nanopolish_range + '.vcf'
-        while (1) :
-            command = ' '.join(['nanopolish variants --faster --consensus',
-                                '-o', nanopolish_vcf,
-                                '-w', nanopolish_range,
-                                '-r', self.ont_fastq,
-                                '-b', self.nanopolish_bam,
-                                '-g', self.genome_fasta,
-                                '-t 1 --min-candidate-frequency 0.1',
-                                '1>' + self.nanopolish_stdout,
-                                '2>' + self.nanopolish_stderr])
-            self.print_and_run(command)
-            if self.validate_file(nanopolish_vcf) :
-                break
-            else :
-                self.print_and_log('Nanopolish VCF' + nanopolish_vcf + 'failed; trying again',
-                                   self.sub_process_verbosity, self.sub_process_color)
-
         
     def spades_illumina_fastq(self) :
 
@@ -2078,7 +2346,7 @@ class Analysis :
         self.print_and_run(command)
 
         self.genome_fasta = os.path.join(self.spades_dir, 'scaffolds.fasta')
-        if not self.illumina_paired_end :
+        if len(self.illumina_fastq) == 1 :
             self.genome_fasta = os.path.join(self.spades_dir, 'contigs.fasta')
 
         # Fix the silly contig names
@@ -2088,7 +2356,8 @@ class Analysis :
                             '| awk \'{if($0 ~ /^>/){gsub("NODE", "contig", $0);gsub("_length.*", "", $0)}print}\'',
                             '>', fixed_names_fasta])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(fixed_names_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
+        self.validate_file_and_size_or_error(fixed_names_fasta, 'Genome assembly', \
+                                             'cannot be found after fixing names', 'is empty')
             
         # Filter small contigs
         assembly_fasta = os.path.join(self.spades_dir, 'assembly.fasta')
@@ -2100,7 +2369,8 @@ class Analysis :
                             '>', assembly_fasta])
         self.print_and_run(command)
         self.genome_fasta = assembly_fasta
-        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after filtering short contigs', 'is empty')
+        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 
+                                             'cannot be found after filtering short contigs', 'is empty')
 
         self.load_genome()
         
@@ -2121,13 +2391,15 @@ class Analysis :
         self.files_to_clean += [pilon_bam]
 
         # See what mapping method to use - bwa aln or minimap 2
-        if self.illumina_read_length_mean <= 65 :
+        if self.illumina_read_length_mean <= 50 :
             self.bwa_short_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
             method = 'Illumina reads were mapped to the genome assembly using bwa aln.'
         else : # We have longer short reads
             self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
-            method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + str(self.versions['minimap2']) + ').'
-        self.report[self.methods_title][self.assembly_methods] = self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
+            method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + \
+                str(self.versions['minimap2']) + ').'
+        self.report[self.methods_title][self.assembly_methods] = \
+            self.report[self.methods_title][self.assembly_methods].append(pd.Series(method))
 
         # Figure out the depth here.  If it's too low, give some sort of warning?
         coverage_tsv = os.path.join(self.pilon_dir, 'coverage.tsv')
@@ -2136,13 +2408,14 @@ class Analysis :
                             '>', coverage_tsv])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
-        self.pilon_coverage = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').iloc[0,2]
+        self.pilon_coverage = pd.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').iloc[0,2]
 
         # If mean coverage is low then give some warning
         if self.pilon_coverage < self.pilon_coverage_min :
-            warning = 'Illumina coverage for Pilon ({:.0f}X) is below the recommended minimum ({:.0f}X).'.format(self.pilon_coverage, self.pilon_coverage_min)
+            warning = 'Illumina coverage for Pilon ({:.0f}X) is below the recommended minimum ({:.0f}X).'.\
+                format(self.pilon_coverage, self.pilon_coverage_min)
             self.add_warning(warning)
-            self.report[self.assembly_title][self.assembly_notes_title] =  self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
 
         # Actually run pilon
         self.print_and_log('Running Pilon', self.sub_process_verbosity, self.sub_process_color)
@@ -2153,8 +2426,7 @@ class Analysis :
         if len(self.illumina_fastq) == 1 :
             bam_option = '--unpaired'
         command = ' '.join(['pilon',
-                            '-Xmx2g',
-                            '-Xms2g',
+                            '-Xms4g -Xmx4g',
                             '--genome', self.genome_fasta,
                             bam_option, pilon_bam,
                             '--output', pilon_prefix,
@@ -2168,13 +2440,15 @@ class Analysis :
                             '| awk \'{if($0 ~ /^>/){gsub("_pilon", "", $0)}print}\'',
                             '>', self.genome_fasta])
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 'cannot be found after fixing names', 'is empty')
+        self.validate_file_and_size_or_error(self.genome_fasta, 'Genome assembly', 
+                                             'cannot be found after fixing names', 'is empty')
 
         self.load_genome()
 
-        method = 'The Illumina mappings were then used to error-correct the assembmly with Pilon (v ' + str(self.versions['pilon']) + ').'
+        method = 'The Illumina mappings were then used to error-correct the assembmly with Pilon (v ' + \
+            str(self.versions['pilon']) + ').'
         self.report[self.methods_title][self.assembly_methods] = \
-            self.report[self.methods_title][self.assembly_methods].append(pandas.Series(method))
+            self.report[self.methods_title][self.assembly_methods].append(pd.Series(method))
 
         self.make_finish_file(self.pilon_dir)
 
@@ -2187,20 +2461,23 @@ class Analysis :
         command = ' '.join(['faidx -i chromsizes', self.genome_fasta, '>', genome_sizes])
         self.print_and_run(command)
 
-        assembly_info = pandas.read_csv(genome_sizes, sep = '\t', header = None)
+        assembly_info = pd.read_csv(genome_sizes, sep = '\t', header = None)
         assembly_info.columns = ['contig', 'length']
+        self.contig_sizes = assembly_info
         
         # Take a look at the number of contigs, their sizes, and circularity.  Warn if things don't look good
         if assembly_info.shape[0] > 4 :
-            warning = 'Assembly produced {:d} contigs, more than ususally expected; assembly may be fragmented'.format(assembly_info.shape[0])
+            warning = 'Assembly produced {:d} contigs, more than ususally expected; assembly may be fragmented'.\
+                format(assembly_info.shape[0])
             self.add_warning(warning)
-            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
         small_contigs = assembly_info.loc[assembly_info['length'] <= 3000, :]
-        print(small_contigs)
+
         if small_contigs.shape[0] > 0 :
-            warning = 'Assembly produced {:d} small contigs ({:s}); assembly may include spurious sequences.'.format(small_contigs.shape[0], ', '.join(small_contigs['contig']))
+            warning = 'Assembly produced {:d} small contigs ({:s}); assembly may include spurious sequences.'.\
+                format(small_contigs.shape[0], ', '.join(small_contigs['contig']))
             self.add_warning(warning)
-            self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
+            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
         
     
     def assembly_info(self) :
@@ -2211,96 +2488,70 @@ class Analysis :
         os.makedirs(self.info_dir)
         self.make_start_file(self.info_dir)
 
-        # TODO reduce these if's to one block
         if self.ont_fastq :
-            
-            coverage_bam = os.path.join(self.info_dir, 'ont_coverage.bam')
-            self.minimap_ont_fastq(self.genome_fasta, self.ont_fastq, coverage_bam)
-            self.files_to_clean += [coverage_bam]
-            
-            coverage_tsv = os.path.join(self.info_dir, 'ont_coverage.tsv')
-            command = ' '.join(['samtools depth -a', coverage_bam,
-                            '| awk \'{s[$1] += $3; c[$1]++}END{for(i in s){printf "%s\\t%i\\t%.0f\\n", i, c[i], (s[i] / c[i])}}\'',
-                            '>', coverage_tsv])
-            self.print_and_run(command)
-            self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
-
-            self.contig_info['ONT'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').sort_values(1, axis = 0, ascending = False)
-            self.contig_info['ONT'].columns = ['contig', 'size', 'coverage']
-
-            mean_coverage = (self.contig_info['ONT'].iloc[:, 1] * self.contig_info['ONT'].iloc[:, 2]).sum() / self.contig_info['ONT'].iloc[:, 1].sum()
-            
-            if mean_coverage <= self.ont_coverage_min :
-                warning = 'ONT mean coverage ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(mean_coverage, self.ont_coverage_min)
-                self.add_warning(warning)
-                self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
-
-            # If some contigs have low coverage, report that
-            low_coverage = self.contig_info['ONT'].loc[self.contig_info['ONT']['coverage'] < self.ont_coverage_min, :]
-            if low_coverage.shape[0] >= 0 :
-                for contig_i in range(low_coverage.shape[0]) :
-                    warning = 'ONT coverage of {:s} ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], self.ont_coverage_min)
-                    self.add_warning(warning)
-                    self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
-
-            fold_coverage = self.contig_info['ONT']['coverage'] / mean_coverage
-            low_coverage = self.contig_info['ONT'].loc[fold_coverage < 1/5, :]
-            if low_coverage.shape[0] >= 0 :
-                for contig_i in range(low_coverage.shape[0]) :
-                    warning = 'ONT coverage of {:s} ({:.0f}X) is less than 1/5 the mean coverage ({:.0f}X).'.format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], mean_coverage)
-                    self.add_warning(warning)
-                    self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
-            
+            self.assembly_info_fastq(self.ont_fastq, 'ONT', 'ont_coverage')
         if self.illumina_fastq :
-            
-            coverage_bam = os.path.join(self.info_dir, 'illumina_coverage.bam')
-            self.files_to_clean += [coverage_bam]
-            if self.illumina_read_length_mean <= 65 :
-                self.bwa_short_illumina_fastq(self.genome_fasta, self.illumina_fastq, coverage_bam)
-            else :
-                self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, coverage_bam)
-            
-            coverage_tsv = os.path.join(self.info_dir, 'illumina_coverage.tsv')
-            command = ' '.join(['samtools depth -a', coverage_bam,
-                            '| awk \'{s[$1] += $3; c[$1]++}END{for(i in s){printf "%s\\t%i\\t%.0f\\n", i, c[i], (s[i] / c[i])}}\'',
-                            '>', coverage_tsv])
-            self.print_and_run(command)
-            self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
-
-            self.contig_info['Illumina'] = pandas.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').sort_values(1, axis = 0, ascending = False)
-            self.contig_info['Illumina'].columns = ['contig', 'size', 'coverage']
-
-            mean_coverage = (self.contig_info['Illumina'].iloc[:, 1] * self.contig_info['Illumina'].iloc[:, 2]).sum() / self.contig_info['Illumina'].iloc[:, 1].sum()
-                        
-            if mean_coverage <= self.illumina_coverage_min :
-                warning = 'Illumina mean coverage ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(mean_coverage, self.illumina_coverage_min)
-                self.add_warning(warning)
-                self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
-
-            
-            # If some contigs have low coverage, report that
-            low_coverage = self.contig_info['Illumina'].loc[self.contig_info['Illumina']['coverage'] < self.ont_coverage_min, :]
-            if low_coverage.shape[0] >= 0 :
-                for contig_i in range(low_coverage.shape[0]) :
-                    warning = 'Illumina coverage of {:s} ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2] , self.illumina_coverage_min)
-                    self.add_warning(warning)
-                    self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
-
-            fold_coverage = self.contig_info['Illumina']['coverage'] / mean_coverage
-            low_coverage = self.contig_info['Illumina'].loc[fold_coverage < 1/5, :]
-            if low_coverage.shape[0] >= 0 :
-                for contig_i in range(low_coverage.shape[0]) :
-                    warning = 'Illumina coverage of {:s} ({:.0f}X) is less than 1/5 the mean coverage ({:.0f}X).'.format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], mean_coverage)
-                    self.add_warning(warning)
-                    self.report[self.assembly_title][self.assembly_notes_title] = self.report[self.assembly_title][self.assembly_notes_title].append(pandas.Series(warning))
-                    
+            self.assembly_info_fastq(self.illumina_fastq, 'Illumina', 'illumina_coverage')
         self.make_finish_file(self.info_dir)
+
+
+    def assembly_info_fastq(self, fastq, read_type, output_prefix) :
+
+        # Map reads to the assembly
+        coverage_bam = os.path.join(self.info_dir, output_prefix + '.bam')
+        if read_type == 'ONT' :
+            self.minimap_ont_fastq(self.genome_fasta, fastq, coverage_bam)
+        else :
+            self.minimap_illumina_fastq(self.genome_fasta, fastq, coverage_bam)
+        self.files_to_clean += [coverage_bam]
+
+        # Generate a table of contig/coverage
+        coverage_tsv = os.path.join(self.info_dir, output_prefix + '.tsv')
+        command = ' '.join(['samtools depth -a', coverage_bam,
+                            '| awk \'{s[$1] += $3; c[$1]++}',
+                            'END{for(i in s){printf "%s\\t%i\\t%.0f\\n", i, c[i], (s[i] / c[i])}}\'',
+                            '>', coverage_tsv])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(coverage_tsv, 'Coverage TSV', 'cannot be found after samtools', 'is empty')
+
+        self.contig_info[read_type] = pd.read_csv(coverage_tsv, header = None, index_col = None, sep = '\t').sort_values(1, axis = 0, ascending = False)
+        self.contig_info[read_type].columns = ['contig', 'size', 'coverage']
+
+        mean_coverage = (self.contig_info[read_type].iloc[:, 1] * self.contig_info[read_type].iloc[:, 2]).sum() / \
+            self.contig_info[read_type].iloc[:, 1].sum()
+
+        # TODO make this use ONT/Illumina specific coverage
+        if mean_coverage <= self.ont_coverage_min :
+            warning = read_type + ' mean coverage ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.\
+                format(mean_coverage, self.ont_coverage_min)
+            self.add_warning(warning)
+            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+
+        # If some contigs have low coverage, report that
+        # TODO make this use ONT/Illumina specific coverage
+        low_coverage = self.contig_info[read_type].loc[self.contig_info[read_type]['coverage'] < self.ont_coverage_min, :]
+        if low_coverage.shape[0] >= 0 :
+            for contig_i in range(low_coverage.shape[0]) :
+                warning = read_type + ' coverage of {:s} ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.\
+                    format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], self.ont_coverage_min)
+                self.add_warning(warning)
+                self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+
+        # See if some contigs have anolously low coverage
+        fold_coverage = self.contig_info[read_type]['coverage'] / mean_coverage
+        low_coverage = self.contig_info[read_type].loc[fold_coverage < 1/5, :]
+        if low_coverage.shape[0] >= 0 :
+            for contig_i in range(low_coverage.shape[0]) :
+                warning = read_type + ' coverage of {:s} ({:.0f}X) is less than 1/5 the mean coverage ({:.0f}X).'.\
+                    format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], mean_coverage)
+                self.add_warning(warning)
+                self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
         
         
     def make_blast_database(self, database_fasta) :
 
         self.print_and_log('Making a BLAST database for ' + database_fasta, self.sub_process_verbosity, self.sub_process_color)
-        std_prefix = re.sub('\.[^.]*$', '', database_fasta)
+        std_prefix = re.sub('\\.[^.]*$', '', database_fasta)
         stdout_file, stderr_file = self.std_files(std_prefix)
         command = ' '.join(['makeblastdb -in', database_fasta, '-dbtype nucl -parse_seqids',
                             '1>' + stdout_file, '2>' + stderr_file])
@@ -2316,8 +2567,6 @@ class Analysis :
         os.makedirs(self.features_dir)
         self.make_start_file(self.features_dir)
         
-        self.feature_hits = pandas.Series()
-
         # Make a blast database of the genome
         self.make_blast_database(self.genome_fasta)
         
@@ -2329,12 +2578,8 @@ class Analysis :
             self.feature_dirs += [feature_dir]
             self.feature_names += [feature_name]
 
-        method = 'The genome assembly was queried for features using blastn (v ' + self.versions['blastn'] + ').  ' + \
-            'Feature hits were clustered using bedtools (v ' + self.versions['bedtools'] + ') ' + \
-            'and the highest scoring hit for each cluster was reported.'
-        self.report[self.methods_title][self.feature_methods] = \
-            self.report[self.methods_title][self.feature_methods].append(pandas.Series(method))
-
+        self.did_blast_feature_sets = True
+            
         self.make_finish_file(self.features_dir)
         
             
@@ -2350,7 +2595,8 @@ class Analysis :
         command = ' '.join(['blastn -db', self.genome_fasta,
                             '-query', feature_fasta,
                             '-perc_identity 95.0',
-                            '-outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore nident qlen"',
+                            '-outfmt "6',
+                            'qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore nident qlen"',
                             '-evalue 1e-10 -out ', blast_output,
                             '1>' + blastn_stdout, '2>' + blastn_stderr])
         self.print_and_run(command)
@@ -2364,7 +2610,7 @@ class Analysis :
                             '| sort -k 1,1 -k 2,2n >', all_bed])
         self.print_and_run(command)
 
-        # Make clusters of AMR hits
+        # Make clusters of hits
         self.print_and_log('Clustering feature hits', self.sub_process_verbosity, self.sub_process_color)
         merge_bed = os.path.join(feature_dir, 'merge.bed')
         merge_stdout, merge_stderr = self.std_files(os.path.join(feature_dir, 'bedtools_merge'))
@@ -2389,16 +2635,13 @@ class Analysis :
 
         # Keep the feature hits for later drawing.  It may be empty, i.e., no feature hits
         try :
-            best = pandas.read_csv(filepath_or_buffer = best_bed, sep = '\t', header = None)
+            best = pd.read_csv(filepath_or_buffer = best_bed, sep = '\t', header = None)
         except :
-            best = pandas.DataFrame()
+            best = pd.DataFrame()
             
         self.feature_hits[feature_name] = best
 
-        # Report the hits for this feature set
-        self.report[self.feature_title][feature_name] = best
-        
-        
+
     def call_insertions(self) :
 
         self.print_and_log('Calling insertions', self.main_process_verbosity, self.main_process_color)
@@ -2412,9 +2655,6 @@ class Analysis :
         self.print_and_log('Running dnadiff against the reference', self.sub_process_verbosity, self.sub_process_color)
         self.dnadiff_prefix = os.path.join(self.insertions_dir, 'vs_reference')
         self.dnadiff_fasta(self.reference_fasta, self.genome_fasta, self.dnadiff_prefix)
-        method = 'The genome assembly was aligned against the reference sequencing using dnadiff (v ' + self.versions['dnadiff'] + ').'
-        self.report[self.methods_title][self.reference_methods] = \
-            self.report[self.methods_title][self.reference_methods].append(pandas.Series(method))
 
         # Figure out the %-identity with the reference sequence
         dnadiff_report = self.dnadiff_prefix + '.report'
@@ -2433,14 +2673,16 @@ class Analysis :
 
         # Give a warning if the distance is to high
         if self.reference_identity <= self.reference_identity_min :
-            warning = 'Identity with the reference ({:.2f}%) is less than {:.2f}%'.format(self.reference_identity, self.reference_identity_min)
+            warning = 'Identity with the reference ({:.2f}%) is less than {:.2f}%'.\
+                format(self.reference_identity, self.reference_identity_min)
             self.add_warning(warning)
-            self.report[self.alignment_title][self.alignment_notes_title] = self.report[self.alignment_title][self.alignment_notes_title].append(pandas.Series(warning))
+            self.alignment_notes = self.alignment_notes.append(pd.Series(warning))
         
         if self.reference_aligned_fraction <= self.reference_alignment_min :
-            warning = 'Fraction of the reference alignment ({:.2f}%) is less than {:.2f}%'.format(self.reference_aligned_fraction, self.reference_alignment_min)
+            warning = 'Fraction of the reference alignment ({:.2f}%) is less than {:.2f}%'.\
+                format(self.reference_aligned_fraction, self.reference_alignment_min)
             self.add_warning(warning)
-            self.report[self.alignment_title][self.alignment_notes_title] = self.report[self.alignment_title][self.alignment_notes_title].append(pandas.Series(warning))
+            self.alignment_notes = self.alignment_notes.append(pd.Series(warning))
 
         # Pull out the aligned regions of the two genomes
         self.print_and_log('Finding reference and query specific insertions', self.sub_process_verbosity, self.sub_process_color)
@@ -2448,11 +2690,13 @@ class Analysis :
         reference_aligned_bed =  os.path.join(self.insertions_dir, 'reference_aligned.bed')
         genome_aligned_bed = os.path.join(self.insertions_dir, 'genome_aligned.bed')
         command = ' '.join(['cat', self.one_coords,
-                            '| awk \'{OFS = "\\t"; if ($2 < $1){t = $2; $2 = $1; $1 = t} print $12,$1,$2}\' | sort -k 1,1 -k 2,2n',
+                            '| awk \'{OFS = "\\t"; if ($2 < $1){t = $2; $2 = $1; $1 = t} print $12,$1,$2}\'',
+                            '| sort -k 1,1 -k 2,2n',
                             '>', reference_aligned_bed])
         self.print_and_run(command)
         command = ' '.join(['cat', self.one_coords,
-                            '| awk \'{OFS = "\\t"; if ($4 < $3){t = $4; $4 = $3; $3 = t} print $13,$3,$4}\' | sort -k 1,1 -k 2,2n',
+                            '| awk \'{OFS = "\\t"; if ($4 < $3){t = $4; $4 = $3; $3 = t} print $13,$3,$4}\'',
+                            '| sort -k 1,1 -k 2,2n',
                             '>', genome_aligned_bed])
         self.print_and_run(command)
 
@@ -2476,9 +2720,9 @@ class Analysis :
 
         # There may or may not be any insertions seen
         try :
-            self.reference_insertions = pandas.read_csv(filepath_or_buffer = reference_insertions_bed, sep = '\t', header = None)
+            self.reference_insertions = pd.read_csv(filepath_or_buffer = reference_insertions_bed, sep = '\t', header = None)
         except :
-            self.reference_insertions = pandas.DataFrame()
+            self.reference_insertions = pd.DataFrame()
 
         command = ' '.join(['bedtools complement',
                             '-i', genome_aligned_bed,
@@ -2489,24 +2733,22 @@ class Analysis :
 
         # There may or may not be any insertions seen
         try :
-            self.genome_insertions = pandas.read_csv(filepath_or_buffer = genome_insertions_bed, sep = '\t', header = None)
+            self.genome_insertions = pd.read_csv(filepath_or_buffer = genome_insertions_bed, sep = '\t', header = None)
         except :
-            self.genome_insertions = pandas.DataFrame() # Default to an empty DF
+            self.genome_insertions = pd.DataFrame() # Default to an empty DF
 
         # Report the large indels
-        self.report[self.large_indel_title]['Reference insertions'] = self.reference_insertions
-        self.report[self.large_indel_title]['Query insertions'] = self.genome_insertions
+        self.large_indels['Reference insertions'] = self.reference_insertions
+        self.large_indels['Query insertions'] = self.genome_insertions
         
-        method = 'Large insertions or deletions were found as the complement of aligned ' + \
-            'regions using bedtools (v ' + self.versions['bedtools'] + ').'
-        self.report[self.methods_title][self.reference_methods] = \
-            self.report[self.methods_title][self.reference_methods].append(pandas.Series(method))
-
         # Also pull in the number of SNPs and small indels
         genome_snps = self.dnadiff_prefix + '.snps'
-        snps = pandas.read_csv(filepath_or_buffer = genome_snps, sep = '\t', header = None)
-        self.small_indels = snps.loc[(snps.iloc[:, 1] == '.') | (snps.iloc[:, 2] == '.'), :]
-        self.snps = snps.loc[(snps.iloc[:, 1] != '.') & (snps.iloc[:, 2] != '.'), :]
+        try :
+            snps = pd.read_csv(filepath_or_buffer = genome_snps, sep = '\t', header = None)
+            self.small_indels = snps.loc[(snps.iloc[:, 1] == '.') | (snps.iloc[:, 2] == '.'), :]
+            self.snps = snps.loc[(snps.iloc[:, 1] != '.') & (snps.iloc[:, 2] != '.'), :]
+        except :
+            snps = pd.DataFrame()
 
         # See if any mutation regions intersect with deletions
         # TODO make this its own function maybe?
@@ -2521,9 +2763,9 @@ class Analysis :
 
             # There may be no deletions, let's see
             try :
-                self.amr_deletions = pandas.read_csv(filepath_or_buffer = amr_deletion_bed, sep = '\t', header = None)
+                self.amr_deletions = pd.read_csv(filepath_or_buffer = amr_deletion_bed, sep = '\t', header = None)
             except :
-                self.amr_deletions = pandas.DataFrame()
+                self.amr_deletions = pd.DataFrame()
 
             if self.amr_deletions.shape[0] > 0 :
                     self.amr_deletions.columns = ['contig', 'start', 'stop', 'name', 'type', 'drug', 'note']
@@ -2534,7 +2776,8 @@ class Analysis :
         
     def quast_genome(self) :
 
-        self.print_and_log('Running Quast of the genome vs. the reference sequence', self.main_process_verbosity, self.main_process_color) 
+        self.print_and_log('Running Quast of the genome vs. the reference sequence', \
+                           self.main_process_verbosity, self.main_process_color) 
 
         # Quast output directory
         self.quast_dir = os.path.join(self.output_dir, 'quast')
@@ -2552,17 +2795,20 @@ class Analysis :
 
         # Look at the quast TSV file
         quast_report_tsv = os.path.join(self.quast_dir, 'report.tsv')
-        quast_report = pandas.read_csv(quast_report_tsv, header = 0, index_col = 0, sep = '\t')
+        quast_report = pd.read_csv(quast_report_tsv, header = 0, index_col = 0, sep = '\t')
         
-        self.quast_mismatches = int(float(quast_report.loc['# mismatches per 100 kbp', :][0]) * (float(quast_report.loc['Total length (>= 0 bp)', :][0]) / 100000.))
-        self.quast_indels = int(float(quast_report.loc['# indels per 100 kbp', :][0]) * (float(quast_report.loc['Total length (>= 0 bp)', :][0]) / 100000.))
+        self.quast_mismatches = int(float(quast_report.loc['# mismatches per 100 kbp', :][0]) * \
+                                    (float(quast_report.loc['Total length (>= 0 bp)', :][0]) / 100000.))
+        self.quast_indels = int(float(quast_report.loc['# indels per 100 kbp', :][0]) * \
+                                (float(quast_report.loc['Total length (>= 0 bp)', :][0]) / 100000.))
 
         self.make_finish_file(self.quast_dir)
 
         
     def draw_circos(self) :
 
-        self.print_and_log('Drawing Circos plot of assembly v. reference alignment', self.main_process_verbosity, self.main_process_color) 
+        self.print_and_log('Drawing Circos plot of assembly v. reference alignment', \
+                           self.main_process_verbosity, self.main_process_color) 
 
         # Make the directory for drawings
         self.circos_dir = os.path.join(self.output_dir, 'circos')
@@ -2614,7 +2860,8 @@ class Analysis :
             self.print_and_run(command)
 
             # Figure out the tick labels to use and where to place them
-            tick_at = pretty(1, len(self.reference[contig].seq), 12).astype(int)[:-1] # We don't actually want the last tick cause this thing is circular
+            # We don't actually want the last tick cause this thing is circular
+            tick_at = pretty(1, len(self.reference[contig].seq), 12).astype(int)[:-1]
             
             tick_major = tick_at[1] - tick_at[0]
             tick_minor = tick_major / 5
@@ -2629,9 +2876,9 @@ class Analysis :
 
             tick_labels = [format_kmg(i) for i in tick_at]
             
-            tick_data = pandas.DataFrame()
+            tick_data = pd.DataFrame()
             for i in range(len(tick_labels)) :
-                tick_data = pandas.concat([tick_data, pandas.Series([contig, tick_at[i], tick_at[i], tick_labels[i]])], axis = 1)
+                tick_data = pd.concat([tick_data, pd.Series([contig, tick_at[i], tick_at[i], tick_labels[i]])], axis = 1)
             tick_data = tick_data.transpose()
             
             tick_txt = os.path.join(contig_dir, 'tick.txt')
@@ -2644,7 +2891,7 @@ class Analysis :
 
             # Keep track of images for the report
             circos_png = os.path.join(contig_dir, 'circos.png')
-            self.report[self.alignment_title][self.contig_alignment_title][contig] = circos_png
+            self.contig_alignment[contig] = circos_png
 
         self.make_finish_file(self.circos_dir)
             
@@ -2653,7 +2900,7 @@ class Analysis :
         
         self.print_and_log('Calling AMR mutations', self.main_process_verbosity, self.main_process_color)
 
-        # Make the directory for new assembly files
+        # Make the directory for small mutation related work
         self.mutations_dir = os.path.join(self.output_dir, 'mutations')
         os.makedirs(self.mutations_dir)
         self.make_start_file(self.mutations_dir)
@@ -2666,18 +2913,26 @@ class Analysis :
         else :
             self.minimap_ont_fastq(self.reference_fasta, self.ont_fastq, self.reference_mapping_bam)
             kind_of_reads = 'ONT'
-        self.index_bam(self.reference_mapping_bam)
+        
+        self.mutations_read_type = kind_of_reads
 
-        methods = kind_of_reads + ' reads were mapped to the reference sequence using minimap2 (v ' + self.versions['minimap2'] + ').'
-        self.report[self.methods_title][self.mutation_methods] = \
-            self.report[self.methods_title][self.mutation_methods].append(pandas.Series(methods))
+        # Make an mpileup file out of the reads
+        reference_mapping_mpileup = os.path.join(self.mutations_dir, 'reference_mapping.mpileup')
+        self.mpileup_bam(self.reference_mapping_bam, reference_mapping_mpileup)
 
-        # Pull out each region, one at a time
-        region_data = self.mutation_regions
+        # Now call and filter variants with Varscan and filter
+        varscan_raw_prefix = os.path.join(self.mutations_dir, 'varscan_raw')
+        self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'snp', 0.8)
+        self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'indel', 1./3.)
+        varscan_prefix = os.path.join(self.mutations_dir, 'varscan')
+        self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'snp')
+        self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'indel')
+        # And dump as a VCF
+        self.varscan_vcf = self.vcf_varscan(varscan_prefix)
 
-        for region_i in range(region_data.shape[0]) :
+        for region_i in range(self.mutation_regions.shape[0]) :
 
-            region  = region_data.iloc[region_i, :]
+            region  = self.mutation_regions.iloc[region_i, :]
 
             if not region['type'] in ['snp', 'small-indel', 'any'] :
                 continue
@@ -2688,74 +2943,37 @@ class Analysis :
             os.mkdir(region_dir)
 
             region_bed = os.path.join(region_dir, 'region.bed')
-            region_data.loc[[region_i], ].to_csv(path_or_buf = region_bed, sep = '\t', header = False, index = False)
+            self.mutation_regions.loc[[region_i], ].to_csv(path_or_buf = region_bed, sep = '\t', header = False, index = False)
 
-            region_bam = os.path.join(region_dir, 'region.bam')
-            stderr_file = os.path.join(region_dir, 'samtools_view.stderr')
-            command = ' '.join(['samtools view',
-                                '-L', region_bed,
-                                '-b', self.reference_mapping_bam,
-                                '1>' + region_bam,
-                                '2>' + stderr_file])
+            region_mutations_tsv = os.path.join(region_dir, 'region_mutations.tsv')
+            command = ' '.join(['bedtools intersect',
+                                '-nonamecheck',
+                                '-wb',
+                                '-a', region_bed,
+                                '-b', self.varscan_vcf,
+                                ' | awk \'BEGIN{getline < "' + self.mutation_region_bed + '";printf $0"\\t";',
+                                'getline < "' + self.varscan_vcf + '"; getline < "' + self.varscan_vcf + '";print $0}{print}\'',
+                                '1>' + region_mutations_tsv])
             self.print_and_run(command)
-            self.validate_file_and_size_or_error(region_bam, 'Region SAM file', 'cannot be found', 'is empty')
 
-            self.index_bam(region_bam)
-            
-            region_pileup = os.path.join(region_dir, 'region.mpileup')
-            stderr_file = os.path.join(region_dir, 'samtools_index.stderr')
-            command = ' '.join(['samtools mpileup',
-                                '-g',
-                                '-B',
-                                '-l', region_bed,
-                                '-f', self.reference_fasta,
-                                region_bam,
-                                '1>' + region_pileup,
-                                '2>' + stderr_file])
-            self.print_and_run(command)
-            self.validate_file_and_size_or_error(region_pileup, 'Region MPILEUP file', 'cannot be found', 'is empty')
-
-            region_text_pileup = os.path.join(region_dir, 'region.pileup')
-            stderr_file = os.path.join(region_dir, 'samtools_index.stderr')
-            command = ' '.join(['samtools mpileup',
-                                '-B',
-                                '-l', region_bed,
-                                '-f', self.reference_fasta,
-                                region_bam,
-                                '1>' + region_text_pileup,
-                                '2>' + stderr_file])
-            self.print_and_run(command)
-            self.validate_file_and_size_or_error(region_text_pileup, 'Region plain text MPILEUP file', 'cannot be found', 'is empty')
-            
-            # Call the actual SNPs
-            region_vcf = os.path.join(region_dir, 'region.vcf')
-            stderr_file = os.path.join(region_dir, 'bcftools.stderr')
-            mutation_types = 'snps,indels'
-            if kind_of_reads == 'ONT' :
-                mutation_types = 'snps'
-            command = ' '.join(['bcftools call',
-                                '--ploidy 1',
-                                '-c', region_pileup,
-                                '| bcftools view -v ' + mutation_types,
-                                '2>' + stderr_file,
-                                '| sed \'/##/d\'',
-                                '>', region_vcf])
-            self.print_and_run(command)
-            self.validate_file_and_size_or_error(region_vcf, 'Region VCF file', 'cannot be found', 'is empty')
-
-            region_mutations = pandas.read_csv(filepath_or_buffer = region_vcf, sep = '\t', header = 0)
-            region_mutations = pandas.concat([region_mutations,
-                                              pandas.DataFrame(numpy.repeat(region['name'], region_mutations.shape[0]))], axis = 1)
+            try :
+                region_mutations = pd.read_csv(region_mutations_tsv, sep = '\t', header = 0, index_col = False)
+            except :
+                region_mutations = pd.DataFrame()
 
             if region_mutations.shape[0] == 0 :
                 continue
 
             # Figure out what kind of mutations are in this region
-            region_mutation_types = pandas.Series(['snp'] * region_mutations.shape[0], name = 'TYPE', index = region_mutations.index)
+            region_mutation_types = pd.Series(['snp'] * region_mutations.shape[0], name = 'TYPE',
+                                                  index = region_mutations.index)
             region_mutation_types[region_mutations['REF'].str.len() != region_mutations['ALT'].str.len()] = 'small-indel'
-            region_mutation_drugs = pandas.Series(region['drug'] * region_mutations.shape[0], name = 'DRUG',  index = region_mutations.index)
-            region_notes = pandas.Series(region['note'] * region_mutations.shape[0], name = 'NOTE', index = region_mutations.index)
-            region_mutations = pandas.concat([region_mutations, region_mutation_types, region_mutation_drugs, region_notes], axis = 1)
+            region_mutation_drugs = pd.Series(region['drug'] * region_mutations.shape[0], name = 'DRUG',
+                                                  index = region_mutations.index)
+            region_notes = pd.Series(region['note'] * region_mutations.shape[0], name = 'NOTE',
+                                         index = region_mutations.index)
+            region_mutations = pd.concat([region_mutations, region_mutation_types, region_mutation_drugs,
+                                              region_notes], axis = 1)
             region_mutations = region_mutations[['#CHROM', 'POS', 'TYPE', 'REF', 'ALT', 'DRUG', 'NOTE']]
 
             self.amr_mutations[region['name']] = region_mutations
@@ -2763,13 +2981,87 @@ class Analysis :
             # Keep track of mutations for reporting
             self.report[self.mutation_title][region['name']] = region_mutations
 
-        method = 'Mutations were identified using ' + \
-            'samtools mpileup (v ' + self.versions['samtools'] +  ') ' + \
-            'and  bcftools (v ' + self.versions['bcftools'] + ').'
-        self.report[self.methods_title][self.mutation_methods] = \
-            self.report[self.methods_title][self.mutation_methods].append(pandas.Series(method))
-
         self.make_finish_file(self.mutations_dir)
+        
+
+    def mpileup_bam(self, bam, mpileup) :
+
+        self.print_and_log('Making mpileup from BAM', self.sub_process_verbosity, self.sub_process_color)
+        
+        mpileup_stdout, mpileup_stderr = self.std_files(os.path.join(self.mutations_dir, 'mpileup'))
+        command = ' '.join(['samtools mpileup',
+                            '-B',
+                            '-f', self.reference_fasta,
+                            '-o' + mpileup,
+                            bam,
+                            '1>' + mpileup_stdout, '2>' + mpileup_stderr])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(mpileup, 'Region MPILEUP file', 'cannot be found', 'is empty')
+                
+        
+    def varscan_mpileup(self, mpileup, prefix, var_type, min_var_freq) :
+
+        self.print_and_log('Calling ' + var_type + ' with varscan', self.sub_process_verbosity, self.sub_process_color)
+        varscan_var = prefix + '.' + var_type
+        varscan_stderr = ''.join([prefix, '_', var_type, '.stderr'])
+        ## TODO implement min coverage
+        command = ' '.join(['varscan',
+                            'pileup2' + var_type,
+                            mpileup,
+                            '-p-value 0.01',
+                            '--min-coverage 15',
+                            '--min-var-freq', str(min_var_freq),
+                            '--variants',
+                            '1>' + varscan_var, '2>' + varscan_stderr])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(varscan_var, ' '.join(['Varscan', var_type, 'file']), 'cannot be found', 'is empty')
+                            
+
+    def filter_varscan(self, in_prefix, out_prefix, var_type) :
+        
+        self.print_and_log('Filtering Varscan ' + var_type + ' calls', self.sub_process_verbosity, self.sub_process_color)
+        varscan_raw_var = ''.join([in_prefix, '.',var_type])
+        varscan_var = ''.join([out_prefix, '.', var_type])
+        ## TODO implement min coverage
+        command = ' '.join(['cat', varscan_raw_var,
+                            '| awk \'(NR > 1 && $9 == 2 && $5 + $6 >= 15)',
+                            '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f\\\\%", f * 100);'
+                            'min = 1 / log(length(s) + 2) / log(10) + 2/10;if(f > min){print}}\'',
+                            '1>' + varscan_var])
+        self.print_and_run(command)
+        self.validate_file_and_size_or_error(varscan_var, 'Filtered Varscan ' + var_type + ' file', 'cannot be found', 'is empty')
+
+        
+    def vcf_varscan(self, varscan_prefix) :
+
+
+        ## TODO - Make this shorter,  merge them somehow?
+        self.print_and_log('Making VCF from varscan', self.sub_process_verbosity, self.sub_process_color)
+
+        varscan_snp, varscan_indel = [varscan_prefix + '.' + i for i in ['snp', 'indel']]
+        snp_vcf, indel_vcf = [varscan_prefix + '_' + i + '.vcf' for i in ['snp', 'indel']]
+        varscan_vcf = varscan_prefix + '.vcf'
+        self.print_and_log('Making SNP VCF', self.sub_process_verbosity, self.sub_process_color)
+        command = ' '.join(['cat', varscan_snp,
+                            '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
+                            '1>' + snp_vcf])
+        self.print_and_run(command)
+        #self.validate_file_and_size_or_error(varscan_indel, 'Filtered Varscan indel file', 'cannot be found', 'is empty')
+
+        self.print_and_log('Making indel VCF', self.sub_process_verbosity, self.sub_process_color)
+        command = ' '.join(['cat', varscan_indel,
+                            '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
+                            '1>' + indel_vcf])
+        self.print_and_run(command)
+
+        command = ' '.join(['cat', snp_vcf, indel_vcf,
+                            '| sort -k 1,1 -k 2n,2n',
+                            '| awk \'BEGIN{OFS = "\\t";print "##fileformat=VCFv4.2";',
+                            'print "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE"}{print}\'',
+                            '1>' + varscan_vcf])
+        self.print_and_run(command)
+        
+        return(varscan_vcf)
         
         
     def call_plasmids(self) :
@@ -2811,10 +3103,6 @@ class Analysis :
 
         self.files_to_clean += [plasmid_sam]
         
-        method = 'The plasmid reference database was queried against the genome assembly using minimap2 (v ' + self.versions['minimap2'] + ').'
-        self.report[self.methods_title][self.plasmid_methods] = \
-            self.report[self.methods_title][self.plasmid_methods].append(pandas.Series(method))
-        
         # Turn the SAM file in to a PSL file using the modified sam2psl script
         self.print_and_log('Converting the SAM file to a PSL file', self.sub_process_verbosity, self.sub_process_color)
         plasmid_psl = os.path.join(self.plasmid_dir, 'plasmid_hits.psl')
@@ -2825,10 +3113,6 @@ class Analysis :
                             '1>', sam2psl_stdout, '2>', sam2psl_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(plasmid_sam, 'Plasmid v. contig PSL', 'cannot be found', 'is empty')
-
-        method = 'The resulting SAM was converted to a PSL using a custom version of sam2psl.'
-        self.report[self.methods_title][self.plasmid_methods] = \
-            self.report[self.methods_title][self.plasmid_methods].append(pandas.Series(method))
         
         # Make a BLAST database of the plasmid sequences
         self.make_blast_database(self.plasmid_database)
@@ -2848,10 +3132,6 @@ class Analysis :
                             '1>' + stdout_file, '2>' + stderr_file])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.plasmid_tsv, 'Plasmid output table', 'cannot be found', 'is empty')
-
-        method = 'Plasmid-to-genome hits were resolved using the pChunks algorithm.'
-        self.report[self.methods_title][self.plasmid_methods] = \
-            self.report[self.methods_title][self.plasmid_methods].append(pandas.Series(method))
         
         # The final file is in pChunks
         self.plasmid_tsv = os.path.join(self.pchunks_dir, 'plasmids.tsv')
@@ -2859,11 +3139,13 @@ class Analysis :
         command = ' '.join(['cp', self.plasmid_tsv, new_plasmid_tsv])
         self.print_and_run(command)
         self.plasmid_tsv = new_plasmid_tsv
-        
-        self.plasmids = pandas.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t', header = 0)
 
-        self.report[self.plasmid_title] = self.plasmids
+        try :
+            self.plasmids = pd.read_csv(filepath_or_buffer = self.plasmid_tsv, sep = '\t', header = 0)
+        except :
+            self.plasmids = None
 
+        self.did_call_plasmids = True
         self.make_finish_file(self.plasmid_dir)
         
 
@@ -2883,7 +3165,7 @@ class Analysis :
             contig_plot_pdf = os.path.join(self.drawing_dir, contig.id + '.pdf')
             contig_plot_png = os.path.join(self.drawing_dir, contig.id + '.png')
             
-            feature_sets_to_plot = pandas.Series()
+            feature_sets_to_plot = pd.Series(dtype = object)
 
             self.print_and_log('Drawing features for ' + contig.id, self.sub_process_verbosity, self.sub_process_color)
             
@@ -2902,7 +3184,8 @@ class Analysis :
                 
                 for i in range(contig_features.shape[0]) :
                     i = contig_features.iloc[i, :]
-                    features_to_plot += [GraphicFeature(start = i[1], end = i[2], label = i[3], strand = 1*i[5], color = self.feature_colors[feature_number])]
+                    features_to_plot += [GraphicFeature(start = i[1], end = i[2], label = i[3],
+                                                        strand = 1*i[5], color = self.feature_colors[feature_number])]
                     
                 feature_sets_to_plot[feature_name] = features_to_plot
 
@@ -2929,7 +3212,8 @@ class Analysis :
 
             # Make a figure with separate plots for each feature class
             plots = plt.subplots(nrows = len(feature_sets_to_plot), ncols = 1, sharex = True,
-                                 figsize=(figure_width, plot_height_sum * .66666), gridspec_kw={"height_ratios": expected_plot_heights})
+                                 figsize=(figure_width, plot_height_sum * .66666),
+                                 gridspec_kw={"height_ratios": expected_plot_heights})
             figure = plots[0]
             plots = plots[1]
             if len(feature_sets_to_plot) == 1: 
@@ -2953,7 +3237,7 @@ class Analysis :
             figure.savefig(contig_plot_pdf)
             figure.savefig(contig_plot_png)
 
-            self.report[self.feature_plot_title][contig.id] = contig_plot_png
+            self.feature_plots[contig.id] = contig_plot_png
 
         self.make_finish_file(self.drawing_dir)
 
@@ -2962,7 +3246,7 @@ class Analysis :
 
         self.print_and_log("Drawing AMR matrix", self.main_process_verbosity, self.main_process_color)
                     
-        amr_to_draw = pandas.DataFrame(columns =['gene', 'drug'])
+        amr_to_draw = pd.DataFrame(columns =['gene', 'drug'])
         
         # Roll up AMR gene hits
         if 'amr' in self.feature_hits :
@@ -2972,19 +3256,23 @@ class Analysis :
                     gene_name = gene[3]
                     drugs = self.amr_gene_drug.loc[self.amr_gene_drug[0] == gene_name, :][1]
                     for drug in drugs :
-                        amr_to_draw = amr_to_draw.append(pandas.Series([gene_name, drug], name = amr_to_draw.shape[0],  index = amr_to_draw.columns))
+                        amr_to_draw = amr_to_draw.append(pd.Series([gene_name, drug],
+                                                                       name = amr_to_draw.shape[0],
+                                                                       index = amr_to_draw.columns))
                 
         # Roll up potentially resistance conferring mutations
         if self.amr_mutations.shape[0] > 0 :
             for mutation_region, mutation_hits in self.amr_mutations.iteritems() : # Idx, DF
                 for mutation_idx, mutation_hit in mutation_hits.iterrows() :
                     mutation_name = mutation_region + ' ' + mutation_hit['REF'] + '->' + mutation_hit['ALT']
-                    amr_to_draw = amr_to_draw.append(pandas.Series([mutation_name, mutation_hit['DRUG']], name = amr_to_draw.shape[0],  index = amr_to_draw.columns))
+                    amr_to_draw = amr_to_draw.append(pd.Series([mutation_name, mutation_hit['DRUG']],
+                                                                   name = amr_to_draw.shape[0],
+                                                                   index = amr_to_draw.columns))
 
         # Roll up deletions that might confer resistance
         if self.amr_deletions.shape[0] > 0 :
             for deletion_idx, deleted_gene in self.amr_deletions.iterrows() :
-                amr_to_draw = amr_to_draw.append(pandas.Series(['\u0394' + deleted_gene[3], deleted_gene[5]],
+                amr_to_draw = amr_to_draw.append(pd.Series(['\u0394' + deleted_gene[3], deleted_gene[5]],
                                                                name = amr_to_draw.shape[0],
                                                                index = amr_to_draw.columns))
                 
@@ -2995,11 +3283,11 @@ class Analysis :
         present_genes = amr_to_draw['gene'].unique()
         present_drugs = amr_to_draw['drug'].unique()
                             
-        amr_matrix = pandas.DataFrame(0, index = present_genes, columns = present_drugs)
+        amr_matrix = pd.DataFrame(0, index = present_genes, columns = present_drugs)
         for hit_idx, hit in amr_to_draw.iterrows() :
             amr_matrix.loc[hit[0], hit[1]] = 1
             
-        amr_matrix_pdf, amr_matrix_png = os.path.join(self.output_dir, 'amr_matrix.pdf'), os.path.join(self.output_dir, 'amr_matrix.png')
+        amr_matrix_pdf, amr_matrix_png = [os.path.join(self.output_dir, 'amr_matrix.' + i) for i in ['png', 'pdf']]
         int_matrix = amr_matrix[amr_matrix.columns].astype(int)
         figure, axis = plt.subplots()
         heatmap = axis.pcolor(int_matrix, cmap = plt.cm.Blues, linewidth = 0)
@@ -3053,22 +3341,25 @@ class Analysis :
 
         
     def clean_up(self) :
-
+                
+        self.print_and_log('Cleaning up', self.main_process_verbosity, self.main_process_color)
+        
         if (self.genome_fasta) :
             final_fasta = os.path.join(self.output_dir, 'assembly.fasta')
             command = ' '.join(['cp', self.genome_fasta, final_fasta])
             self.print_and_run(command)
 
-        if len(self.files_to_clean) > 1 :
+        if len(self.files_to_clean) > 0 :
             for file in self.files_to_clean :
-                command = 'rm ' + file
+                command = 'rm -r ' + file
                 self.print_and_run(command)
 
             
     def go(self) :
 
-        analysis_string = '\n'.join([str(i+1) + ') ' + self.analysis[i] for i in range(len(self.analysis))])
-        print(self.main_process_color + analysis_string + Colors.ENDC)
+        if (self.verbosity > 0) :
+            analysis_string = '\n'.join([str(i+1) + ') ' + self.analysis[i] for i in range(len(self.analysis))])
+            print(self.main_process_color + analysis_string + Colors.ENDC)
         
         while (True) :
             step = self.analysis[0]
@@ -3122,6 +3413,8 @@ if __name__ == '__main__':
                         help = 'Maxmium time to watch for new reads.' )
     input_group.add_argument('--ont-watch-between-time', required = False, type = float, default = 15, metavar = '<MINUTES>',
                         help = 'Maximum to to wait between new FAST5 files')
+    input_group.add_argument('--ont-watch-min-coverage', required = False, type = float, default = None, metavar = '<X>',
+                        help = 'Minimum genome coverage achieved before starting analysis.')
     input_group.add_argument('--ont-fast5', required = False, default = None, metavar = '<ONT_DIR>',
                         help = 'Directory containing ONT FAST5 files')
     input_group.add_argument('--basecaller', required = False, default = 'guppy', choices = ['guppy'],
@@ -3130,10 +3423,10 @@ if __name__ == '__main__':
                         help = 'File containing basecalled ONT reads')
     input_group.add_argument('--multiplexed', required = False, default = False, action = 'store_true',
                         help = 'The ONT data are multiplexed (default : %(default)s)')
-    input_group.add_argument('--demux', required = False, default = 'qcat', choices = ['qcat'],
-                        help = 'Demultiplexer/trimmer to use (default : %(default)s)')
     input_group.add_argument('--error-correct', required = False, default = False, action = 'store_true',
                         help = 'Use LORMA to  error-correct ONT reads (default : %(default)s)')
+    input_group.add_argument('--contamination', required = False, default = False, action = 'store_true',
+                        help = 'Use Kraken2 to look for contamination in the input read (default : %(default)s)')
     input_group.add_argument('--only-basecall', required = False, default = False, action = 'store_true',
                         help = 'Just basecall and demultiplex/trim/correct.  No downstream analysis.')
     
@@ -3157,7 +3450,7 @@ if __name__ == '__main__':
                         help = 'Assembler to use (default : %(default)s)')
     assembly_group.add_argument('--genome-size', required = False, default = None, type = str, metavar = '<GENOME_SIZE>',
                         help = 'Genome size estimate for the assembly & downsampling (default : %(default)s))')
-    assembly_group.add_argument('--assembly-coverage', required = False, default = 150, type = int, metavar = '<X>',
+    assembly_group.add_argument('--assembly-coverage', required = False, default = 200, type = int, metavar = '<X>',
                         help = 'Downsample the provided reads to this coverage (default : %(default)sX)')
     assembly_group.add_argument('--racon', required = False, default = False, action = 'store_true',
                         help = 'Force the generation a racon consenus (default : %(default)s)')
@@ -3165,14 +3458,6 @@ if __name__ == '__main__':
                         help = 'Number of RACON rounds used to generate a consensus (default : %(default)s)')
     assembly_group.add_argument('--no-medaka', required = False, default = False, action = 'store_true',
                         help = 'Skip Medaka polising of the ONT assembly (faster) (default : %(default)s)')
-    assembly_group.add_argument('--nanopolish', required = False, default = False, action = 'store_true',
-                        help = 'Run Nanopolish on the RACON consensus (slow) (default : %(default)s)')
-    assembly_group.add_argument('--max-nanopolish-coverage', required = False, type = int, default = 100, metavar = '<MAX_COVERAGE>',
-                        help = 'Maximum coverage before downsampling nanopolish input (default : %(default)s)')
-    assembly_group.add_argument('--albacore-seq-file', required = False, type = str, default = None, metavar = '<ALBACORE_SEQ_FILE>',
-                        help = 'List of albacore sequencing summary files for nanopolish (default : %(default)s)')
-    assembly_group.add_argument('--pilon', required = False, default = False, action = 'store_true',
-                        help = 'Run Pilon if Illumina reads are given (default : %(default)s)')
     assembly_group.add_argument('--only-assemble', required = False, default = False, action = 'store_true',
                         help = 'Only carry out assembly steps with the given data; no downstream analysis.')
     assembly_group.add_argument('--no-assembly', required = False, default = False, action = 'store_true',
@@ -3182,13 +3467,14 @@ if __name__ == '__main__':
     # Database/download options
     download_group = parser.add_argument_group('Database downloading arguments')
     download_group.add_argument('--download', required = False, default = False, action = 'store_true',
-                                help = 'Attempt to download AMR/Incompatibility group/Plasmid databases if not found locally.  Use witout other options.')
+                                help = 'Attempt to download Kraken/Plasmid databases if not found locally.' +\
+                                'Use witout other options.')
 
     # Plasmid options
     plasmid_group = parser.add_argument_group('Plasmid and vector search options')
     plasmid_group.add_argument('--plasmids', required = False, default = False, action = 'store_true', 
                         help = 'Do a plasmid search (default : %(default)s)')
-    plasmid_group.add_argument('--plasmid-database', required = False, default = plasmid_database_default, metavar = '<PLASMID_FASTA>', 
+    plasmid_group.add_argument('--plasmid-database', required = False, default = plasmid_database_default_fasta, metavar = '<PLASMID_FASTA>', 
                         help = 'Path to a FASTA file with reference plasmid sequences')
 
     
@@ -3210,8 +3496,8 @@ if __name__ == '__main__':
     
     # Pull in custom feature sets
     other_feature_group = parser.add_argument_group('Other feature search options')
-    other_feature_group.add_argument('--feature', required = False, default = None, metavar = '<FEATURE_FASTA>', action = 'append',
-                                     help = 'Path to a FASTA file with feature sequences')
+    other_feature_group.add_argument('--feature', required = False, default = None, metavar = '<FEATURE_FASTA>',
+                                     action = 'append', help = 'Path to a FASTA file with feature sequences')
     
     
     # Drawing options
@@ -3225,13 +3511,15 @@ if __name__ == '__main__':
     reference_group.add_argument('--reference-dir', required = False, default = reference_dir_default, metavar = '<REFERNCE_DIR>',
                                 help = 'Directory containing refrence organisms (default : %(default)s)' )
     reference_group.add_argument('--organism', required = False, default = None, metavar = '<ORGANISM>',
-                        help = 'Reference organism to compare against')
+                                 help = 'Reference organism to compare against')
     reference_group.add_argument('--list-organisms', required = False, action = 'store_true',
-                             help = 'List the reference organisms available to this pipeline')
+                                 help = 'List the reference organisms available to this pipeline')
+    reference_group.add_argument('--auto-reference', required = False, default = False, action = 'store_true',
+                                 help = 'Automatically choose an appropriate reference if available.')
     reference_group.add_argument('--reference-genome', required = False, default = None, metavar = '<GENOME_FASTA>',
-                        help = 'Reference genome to compare against (default : %(default)s)')
+                                 help = 'Reference genome to compare against (default : %(default)s)')
     reference_group.add_argument('--mutation-regions', required = False, default = None, metavar = '<REGION_BED>',
-                        help = 'Regions in the reference genome to screen for mutations (default : %(default)s)')
+                                 help = 'Regions in the reference genome to screen for mutations (default : %(default)s)')
 
     
     # Other arguments
@@ -3266,9 +3554,6 @@ if __name__ == '__main__':
     analysis.validate_options()
     
     if len(analysis.errors) > 0 :
-        #print(Colors.HEADER)
-        #parser.print_help()
-        #print(Colors.ENDC)
         print(Colors.FAIL + '\n\nErrors:')
         [print(i) for i in analysis.errors]
         print(Colors.ENDC)
