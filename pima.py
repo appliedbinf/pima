@@ -1797,10 +1797,11 @@ class Analysis :
         guppy_stdout, guppy_stderr = self.std_files(os.path.join(ont_fastq_dir, 'guppy'))
         
         # Run the basecalling with Guppy
+        guppy_dir = os.path.join(ont_fastq_dir, 'guppy')
         command = ' '.join(['guppy_basecaller',
                     '-i', ont_fast5,
                     '-r',
-                    '-s', ont_fastq_dir,
+                    '-s', guppy_dir,
                     '--num_callers 14',
                     '--gpu_runners_per_device 8',
                     '--device "cuda:0"',
@@ -1812,7 +1813,9 @@ class Analysis :
         # Merge the smaller FASTQ files
         self.print_and_log('Merging Guppy runs into raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
         ont_raw_fastq = os.path.join(ont_fastq_dir, 'ont_raw.fastq')
-        command = ' '.join(['cat', ont_fastq_dir + '/*.fastq >', ont_raw_fastq])
+	# TODO - Handle output FASTQ locations for different versions of guppy
+        pass_dir = os.path.join(guppy_dir, 'pass')
+       	command = ' '.join(['cat', pass_dir + '/*.fastq >', ont_raw_fastq])
         self.print_and_run(command)
 
         # Make sure the merged FASTQ file exists and has size > 0
@@ -1951,7 +1954,7 @@ class Analysis :
                             '| awk \'{getline;print length($0);s += length($1);getline;getline;}END{print "+"s}\'',
                             '| sort -gr',
                             '| awk \'BEGIN{bp = 0;f = 0}',
-                            '{if(NR == 1){sub("+", "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
+                            '{if(NR == 1){sub(/+/, "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
                             'END{print n50"\t"(NR - 1)"\t"s;exit}\''])
         result = list(re.split('\\t', self.print_and_run(command)[0]))
         if result[1] == '0' :
