@@ -1814,7 +1814,10 @@ class Analysis :
         self.print_and_log('Merging Guppy runs into raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
         ont_raw_fastq = os.path.join(ont_fastq_dir, 'ont_raw.fastq')
 	# TODO - Handle output FASTQ locations for different versions of guppy
-        pass_dir = os.path.join(guppy_dir, 'pass')
+        if self.versions['guppy'] < '4.5' :
+             pass_dir = guppy_dir
+        else :
+             pass_dir = os.path.join(guppy_dir, 'pass')
        	command = ' '.join(['cat', pass_dir + '/*.fastq >', ont_raw_fastq])
         self.print_and_run(command)
 
