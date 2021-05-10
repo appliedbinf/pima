@@ -144,15 +144,13 @@ class PimaReport :
                         self.analysis.versions['medaka'] + ').'
                     self.methods[self.assembly_methods_title] = self.methods[self.assembly_methods_title].append(pd.Series(method))
 
-
-
             if len(self.analysis.assembly_notes) > 0 :
                 with self.doc.create(Subsection(self.assembly_notes_title, numbering = False)) :
                         left = FlushLeft()
                         for note in self.analysis.assembly_notes :
                             left.append(note)
                             left.append(LineBreak())
-                            self.doc.append(left)
+                        self.doc.append(left)
                         self.doc.append(VerticalSpace("10pt"))
                 
             if not (self.analysis.contig_info is None) :
@@ -182,7 +180,7 @@ class PimaReport :
 
     def add_contamination(self) :
 
-        if self.analysis.kraken_fracs is None :
+        if len(self.analysis.kraken_fracs) == 0 :
             return
 
         self.doc.append(NewPage())
