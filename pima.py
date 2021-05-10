@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/usr/bin/env python
 
 import copy
 import csv
@@ -1957,7 +1957,7 @@ class Analysis :
                             '| awk \'{getline;print length($0);s += length($1);getline;getline;}END{print "+"s}\'',
                             '| sort -gr',
                             '| awk \'BEGIN{bp = 0;f = 0}',
-                            '{if(NR == 1){sub(/+/, "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
+                            '{if(NR == 1){sub(/\+/, "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
                             'END{print n50"\t"(NR - 1)"\t"s;exit}\''])
         result = list(re.split('\\t', self.print_and_run(command)[0]))
         if result[1] == '0' :
