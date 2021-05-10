@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/usr/bin/env python
 
 import copy
 import csv
@@ -1958,7 +1958,7 @@ class Analysis :
                             '| awk \'{getline;print length($0);s += length($1);getline;getline;}END{print "+"s}\'',
                             '| sort -gr',
                             '| awk \'BEGIN{bp = 0;f = 0}',
-                            '{if(NR == 1){sub(/+/, "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
+                            '{if(NR == 1){sub(/\+/, "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
                             'END{print n50"\t"(NR - 1)"\t"s;exit}\''])
         result = list(re.split('\\t', self.print_and_run(command)[0]))
         if result[1] == '0' :
@@ -2505,7 +2505,7 @@ class Analysis :
                     format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], self.ont_coverage_min)
                 self.add_warning(warning)
                 self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
-
+                
         # See if some contigs have anolously low coverage
         fold_coverage = self.contig_info[read_type]['coverage'] / mean_coverage
         low_coverage = self.contig_info[read_type].loc[fold_coverage < 1/5, :]
@@ -2894,10 +2894,14 @@ class Analysis :
         # Now call and filter variants with Varscan and filter
         varscan_raw_prefix = os.path.join(self.mutations_dir, 'varscan_raw')
         self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'snp', 0.8)
-        self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'indel', 1./3.)
+        if kind_of_reads != 'ONT' :
+            self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'indel', 1./3.)
+            
         varscan_prefix = os.path.join(self.mutations_dir, 'varscan')
         self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'snp')
-        self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'indel')
+        if kind_of_reads != 'ONT' :
+            self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'indel')
+            
         # And dump as a VCF
         self.varscan_vcf = self.vcf_varscan(varscan_prefix)
 
@@ -2996,7 +3000,7 @@ class Analysis :
         ## TODO implement min coverage
         command = ' '.join(['cat', varscan_raw_var,
                             '| awk \'(NR > 1 && $9 == 2 && $5 + $6 >= 15)',
-                            '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f\\\\%", f * 100);'
+                            '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f%%", f * 100);'
                             'min = 1 / log(length(s) + 2) / log(10) + 2/10;if(f > min){print}}\'',
                             '1>' + varscan_var])
         self.print_and_run(command)
@@ -3011,21 +3015,26 @@ class Analysis :
 
         varscan_snp, varscan_indel = [varscan_prefix + '.' + i for i in ['snp', 'indel']]
         snp_vcf, indel_vcf = [varscan_prefix + '_' + i + '.vcf' for i in ['snp', 'indel']]
+        found_vcf = []
         varscan_vcf = varscan_prefix + '.vcf'
-        self.print_and_log('Making SNP VCF', self.sub_process_verbosity, self.sub_process_color)
-        command = ' '.join(['cat', varscan_snp,
-                            '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
-                            '1>' + snp_vcf])
-        self.print_and_run(command)
-        #self.validate_file_and_size_or_error(varscan_indel, 'Filtered Varscan indel file', 'cannot be found', 'is empty')
 
-        self.print_and_log('Making indel VCF', self.sub_process_verbosity, self.sub_process_color)
-        command = ' '.join(['cat', varscan_indel,
-                            '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
-                            '1>' + indel_vcf])
-        self.print_and_run(command)
+        if os.path.isfile(varscan_snp) :
+            self.print_and_log('Making SNP VCF', self.sub_process_verbosity, self.sub_process_color)
+            command = ' '.join(['cat', varscan_snp,
+                                '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
+                                '1>' + snp_vcf])
+            self.print_and_run(command)
+            found_vcf += [snp_vcf]
 
-        command = ' '.join(['cat', snp_vcf, indel_vcf,
+        if os.path.isfile(varscan_indel) :
+            self.print_and_log('Making indel VCF', self.sub_process_verbosity, self.sub_process_color)
+            command = ' '.join(['cat', varscan_indel,
+                                '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
+                                '1>' + indel_vcf])
+            self.print_and_run(command)
+            found_vcf += [varscan_vcf]
+
+        command = ' '.join(['cat', ' '.join(found_vcf),
                             '| sort -k 1,1 -k 2n,2n',
                             '| awk \'BEGIN{OFS = "\\t";print "##fileformat=VCFv4.2";',
                             'print "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE"}{print}\'',
