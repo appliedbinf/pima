@@ -182,7 +182,7 @@ class PimaReport :
 
     def add_contamination(self) :
 
-        if self.analysis.kraken_fracs is None :
+        if len(self.analysis.kraken_fracs) == 0 :
             return
 
         self.doc.append(NewPage())
