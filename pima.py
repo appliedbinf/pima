@@ -3031,7 +3031,7 @@ class Analysis :
         ## TODO implement min coverage
         command = ' '.join(['cat', varscan_raw_var,
                             '| awk \'(NR > 1 && $9 == 2 && $5 + $6 >= 15)',
-                            '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f\\\\%", f * 100);'
+                            '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f%%", f * 100);'
                             'min = 1 / log(length(s) + 2) / log(10) + 2/10;if(f > min){print}}\'',
                             '1>' + varscan_var])
         self.print_and_run(command)
