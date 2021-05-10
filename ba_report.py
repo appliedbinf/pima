@@ -17,9 +17,10 @@ import os
 
 cdc_advisory = 'The analysis and report presented here should be treated as preliminary.  Please contact the CDC/BDRD with any results regarding Bacillus anthracis.'
 
-class PimaReport :
-    
-    def __init__(self, analysis) :
+
+class PimaReport:
+
+    def __init__(self, analysis):
 
         self.analysis = analysis
         self.report = analysis.report
@@ -182,7 +183,7 @@ class PimaReport :
 
     def add_contamination(self) :
 
-        if self.analysis.kraken_fracs is None :
+        if len(self.analysis.kraken_fracs) == 0 :
             return
 
         self.doc.append(NewPage())
@@ -197,7 +198,7 @@ class PimaReport :
                 self.doc.append(left)
                             
                 with self.doc.create(Tabular(''.join(['l'] * kraken_fracs.shape[1]), width = kraken_fracs.shape[1])) as table :
-                    table.add_row(('Percent of reads', 'Level', 'Label'))
+                    table.add_row(('Percent of reads', 'Reads', 'Level', 'Label'))
                     table.add_hline()
                     for index, row in kraken_fracs.iterrows() :
                         table.add_row(row.tolist())
