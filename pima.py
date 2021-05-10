@@ -140,6 +140,7 @@ class Analysis :
         self.ont_read_count = None
         self.ont_read_lengths = None
         self.will_have_ont_fastq = False
+        self.ont_read_lengths = []
 
         # Basecalling
         self.ont_fast5 = None
@@ -1813,7 +1814,7 @@ class Analysis :
         # Merge the smaller FASTQ files
         self.print_and_log('Merging Guppy runs into raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
         ont_raw_fastq = os.path.join(ont_fastq_dir, 'ont_raw.fastq')
-	# TODO - Handle output FASTQ locations for different versions of guppy
+
         if self.versions['guppy'] < '4.5' :
              pass_dir = guppy_dir
         else :
@@ -2055,7 +2056,7 @@ class Analysis :
         
         kraken_files = [os.path.join(fastq_dir, 'kraken.' + i) for i in ['report', 'out', 'class', 'unclass']]        
         kraken_report, kraken_out, kraken_class, kraken_unclass = kraken_files
-        kraken_stdout, kraken_stderr = self.std_files(os.path.join(self.kraken_dir, 'kraken'))
+        kraken_stdout, kraken_stderr = self.std_files(os.path.join(fastq_dir, 'kraken'))
 
         fastq_arg = fastq
         if isinstance(fastq, list) :
@@ -2087,44 +2088,6 @@ class Analysis :
         kraken_fracs['Taxa'] = kraken_fracs['Taxa'].str.lstrip()
 
         return(kraken_fracs)
-
-        
-    def lorma_ont_fastq(self) :
-
-        self.print_and_log('Using lordec-correct to error-correct ONT reads',
-                           self.main_process_verbosity, self.main_process_color)
-
-        if not self.ont_fastq_dir :
-            self.ont_fastq_dir = os.path.join(self.output_dir, 'ont_fastq')
-            os.makedirs(self.ont_fastq_dir)
-        
-        # Use lordec-correct to ONT reads
-        self.print_and_log('Running LoRMA on the ONT reads', self.sub_process_verbosity, self.sub_process_color)
-        lorma_fasta, lorma_fastq = [os.path.join(self.ont_fastq_dir, 'lorma.' + i) for i in ['fasta', 'fastq']]
-        lorma_stdout, lorma_stderr = self.std_files(os.path.join(self.ont_fastq_dir, 'lorma'))
-        command = ' '.join(['lordec-correct',
-                            '-c -s 4 -k 19 -g',
-                            '-T', str(self.threads),
-                            '-i', self.ont_fastq,
-                            '-2', self.ont_fastq,
-                            '-o', lorma_fasta,
-                            '1>', lorma_stdout, '2>', lorma_stderr])
-        self.print_and_run(command)
-
-        # Check for LoRMA output
-        self.validate_file_and_size_or_error(lorma_fasta, 'LoRMA FASTA', 'cannot be found after lordec-correct', 'is empty')
-
-        # Make a FASTQish file from the LoRMA output
-        self.print_and_log('Converting LoRMA FASTA to a FASTQ', self.sub_process_verbosity, self.sub_process_color)
-        quality = 25
-        with open(lorma_fasta, 'r') as lorma_fasta_handle, open(lorma_fastq, 'w') as lorma_fastq_handle :
-            for fasta in Bio.SeqIO.parse(lorma_fasta_handle, 'fasta') :
-                 fasta.letter_annotations['phred_quality'] = [quality] * len(fasta)
-                 Bio.SeqIO.write(fasta, lorma_fastq_handle, 'fastq')
-
-        self.validate_file_and_size_or_error(lorma_fasta, 'LoRMA FASTQ', 'cannot be found after FASTQ conversion', 'is empty')
-
-        self.ont_fastq = lorma_fastq
 
         
     def wtdbg2_ont_fastq(self) :
@@ -2891,8 +2854,10 @@ class Analysis :
             tick_data.to_csv(path_or_buf = tick_txt, sep = '\t', header = False, index = False)
                                          
             circos_conf = os.path.join(data_dir, 'circos.conf')
+            circos_stdout, circos_stderr = self.std_files('circos')
             command = ' '.join(['(cd', contig_dir,
-                                '&& circos --conf', circos_conf, ')'])
+                                '&& circos --conf', circos_conf,
+                                '1>' + circos_stdout, '2>' + circos_stderr, ')'])
             self.print_and_run(command)
 
             # Keep track of images for the report
