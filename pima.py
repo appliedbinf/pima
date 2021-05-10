@@ -1951,7 +1951,7 @@ class Analysis :
                             '| awk \'{getline;print length($0);s += length($1);getline;getline;}END{print "+"s}\'',
                             '| sort -gr',
                             '| awk \'BEGIN{bp = 0;f = 0}',
-                            '{if(NR == 1){sub("+", "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
+                            '{if(NR == 1){sub(/\+/, "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
                             'END{print n50"\t"(NR - 1)"\t"s;exit}\''])
         result = list(re.split('\\t', self.print_and_run(command)[0]))
         if result[1] == '0' :
@@ -2536,7 +2536,7 @@ class Analysis :
                     format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], self.ont_coverage_min)
                 self.add_warning(warning)
                 self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
-
+                
         # See if some contigs have anolously low coverage
         fold_coverage = self.contig_info[read_type]['coverage'] / mean_coverage
         low_coverage = self.contig_info[read_type].loc[fold_coverage < 1/5, :]
