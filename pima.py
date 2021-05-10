@@ -1797,10 +1797,11 @@ class Analysis :
         guppy_stdout, guppy_stderr = self.std_files(os.path.join(ont_fastq_dir, 'guppy'))
         
         # Run the basecalling with Guppy
+        guppy_dir = os.path.join(ont_fastq_dir, 'guppy')
         command = ' '.join(['guppy_basecaller',
                     '-i', ont_fast5,
                     '-r',
-                    '-s', ont_fastq_dir,
+                    '-s', guppy_dir,
                     '--num_callers 14',
                     '--gpu_runners_per_device 8',
                     '--device "cuda:0"',
@@ -1812,7 +1813,12 @@ class Analysis :
         # Merge the smaller FASTQ files
         self.print_and_log('Merging Guppy runs into raw ONT FASTQ', self.sub_process_verbosity, self.sub_process_color)
         ont_raw_fastq = os.path.join(ont_fastq_dir, 'ont_raw.fastq')
-        command = ' '.join(['cat', ont_fastq_dir + '/*.fastq >', ont_raw_fastq])
+	# TODO - Handle output FASTQ locations for different versions of guppy
+        if self.versions['guppy'] < '4.5' :
+             pass_dir = guppy_dir
+        else :
+             pass_dir = os.path.join(guppy_dir, 'pass')
+       	command = ' '.join(['cat', pass_dir + '/*.fastq >', ont_raw_fastq])
         self.print_and_run(command)
 
         # Make sure the merged FASTQ file exists and has size > 0
