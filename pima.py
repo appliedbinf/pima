@@ -2929,10 +2929,14 @@ class Analysis :
         # Now call and filter variants with Varscan and filter
         varscan_raw_prefix = os.path.join(self.mutations_dir, 'varscan_raw')
         self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'snp', 0.8)
-        self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'indel', 1./3.)
+        if kind_of_reads != 'ONT' :
+            self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'indel', 1./3.)
+            
         varscan_prefix = os.path.join(self.mutations_dir, 'varscan')
         self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'snp')
-        self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'indel')
+        if kind_of_reads != 'ONT' :
+            self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'indel')
+            
         # And dump as a VCF
         self.varscan_vcf = self.vcf_varscan(varscan_prefix)
 
@@ -3046,21 +3050,26 @@ class Analysis :
 
         varscan_snp, varscan_indel = [varscan_prefix + '.' + i for i in ['snp', 'indel']]
         snp_vcf, indel_vcf = [varscan_prefix + '_' + i + '.vcf' for i in ['snp', 'indel']]
+        found_vcf = []
         varscan_vcf = varscan_prefix + '.vcf'
-        self.print_and_log('Making SNP VCF', self.sub_process_verbosity, self.sub_process_color)
-        command = ' '.join(['cat', varscan_snp,
-                            '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
-                            '1>' + snp_vcf])
-        self.print_and_run(command)
-        #self.validate_file_and_size_or_error(varscan_indel, 'Filtered Varscan indel file', 'cannot be found', 'is empty')
 
-        self.print_and_log('Making indel VCF', self.sub_process_verbosity, self.sub_process_color)
-        command = ' '.join(['cat', varscan_indel,
-                            '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
-                            '1>' + indel_vcf])
-        self.print_and_run(command)
+        if os.path.isfile(varscan_snp) :
+            self.print_and_log('Making SNP VCF', self.sub_process_verbosity, self.sub_process_color)
+            command = ' '.join(['cat', varscan_snp,
+                                '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
+                                '1>' + snp_vcf])
+            self.print_and_run(command)
+            found_vcf += [snp_vcf]
 
-        command = ' '.join(['cat', snp_vcf, indel_vcf,
+        if os.path.isfile(varscan_indel) :
+            self.print_and_log('Making indel VCF', self.sub_process_verbosity, self.sub_process_color)
+            command = ' '.join(['cat', varscan_indel,
+                                '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
+                                '1>' + indel_vcf])
+            self.print_and_run(command)
+            found_vcf += [varscan_vcf]
+
+        command = ' '.join(['cat', ' '.join(found_vcf),
                             '| sort -k 1,1 -k 2n,2n',
                             '| awk \'BEGIN{OFS = "\\t";print "##fileformat=VCFv4.2";',
                             'print "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE"}{print}\'',
