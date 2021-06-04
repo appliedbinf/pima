@@ -519,7 +519,7 @@ class Analysis :
             self.print_and_log('Downloading plasmid database', self.sub_process_verbosity, self.sub_process_color)
             command = ' '.join(['wget',
                                 '-O', database_fasta,
-                                'http://pima.appliedbinf.com/data/' + database + '.fasta'])
+                                'http://pima.appliedbinf.com/data/plasmids_and_vectors.fasta'])
             self.print_and_run(command)
 
         if not os.path.isdir(kraken_database_default) :
