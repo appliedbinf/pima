@@ -1959,7 +1959,7 @@ class Analysis :
                             '| sort -gr',
                             '| awk \'BEGIN{bp = 0;f = 0}',
                             '{if(NR == 1){sub(/\+/, "", $1);s=$1}else{bp += $1;if(bp > s / 2 && f == 0){n50 = $1;f = 1}}}',
-                            'END{print n50"\t"(NR - 1)"\t"s;exit}\''])
+                            'END{printf "%d\\t%d\\t%d\\n", n50, (NR - 1), s;exit}\''])
         result = list(re.split('\\t', self.print_and_run(command)[0]))
         if result[1] == '0' :
             self.error_out('No ONT reads found')
