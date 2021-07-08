@@ -283,7 +283,7 @@ class Analysis :
         # Demultiplexing
         self.multiplexed = opts.multiplexed
         self.barcodes = pd.Series()
-        self.barcode_min_fraction = 2.5
+        self.barcode_min_fraction = 0.025
         
         self.error_correct = opts.error_correct
 
@@ -1806,7 +1806,7 @@ class Analysis :
                     '--num_callers 14',
                     '--gpu_runners_per_device 8',
                     '--device "cuda:0"',
-                    '--fast5_out',
+#                    '--fast5_out',
                     '--flowcell FLO-MIN106 --kit SQK-RBK004',
                     '1>' + guppy_stdout, '2>' + guppy_stderr])
         self.print_and_run(command)
@@ -1847,7 +1847,7 @@ class Analysis :
             qcat_input_fastq = self.ont_fastq
 
         self.barcode_summary = self.qcat_ont_fastq(qcat_input_fastq, self.demultiplexed_dir)
-        self.barcode_summary = self.barcode_summary.loc[self.barcode_summary.loc[:, 'Fraction'] >= self.barcode_min_fraction, :] 
+        self.barcode_summary = self.barcode_summary.loc[self.barcode_summary.loc[:, 'Fraction'] >= self.barcode_min_fraction, :]
         self.barcodes = self.barcode_summary.index.to_series()
 
         # Queue the barcode analyses
@@ -1910,7 +1910,9 @@ class Analysis :
         
         self.print_and_log('Starting analysis of individual barcodes.', self.main_process_verbosity, self.main_process_color)
 
+        print(self.barcodes)
         # TODO - clean up this deepcopy stuff? How? Are you just biased against deepcopy?
+        
         for barcode in self.barcodes :
             self.print_and_log('Starting analysis of ' + barcode, self.main_process_verbosity, self.main_process_color)
             barcode_analysis = copy.deepcopy(self)
