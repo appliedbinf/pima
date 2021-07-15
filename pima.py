@@ -659,7 +659,7 @@ class Analysis :
                             '1>' + dnadiff_stdout, '2>' + dnadiff_stderr])
         output_1coords = output_prefix + '.1coords'
         self.print_and_run(command)
-        self.validate_file_and_size_or_error(the_file = output_1coords, min_size = 500)
+        self.validate_file_and_size_or_error(the_file = output_1coords, min_size = 5)
         
         
     def error_out(self, message) :
@@ -1345,14 +1345,13 @@ class Analysis :
             self.analysis = self.analysis + ['call_amr_mutations']
             
         for utility in ['minimap2', 'samtools'] :
-            self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)')
+            if self.validate_utility(utility, utility + ' is not on the PATH (required for AMR mutations)') :
+                command = utility + ' --version'
+                self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
 
-            command = utility + ' --version'
-            self.versions[utility] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
-
-        self.validate_utility('varscan', 'varscan is not on the PATH (required for AMR mutations)')
-        command = 'varscan 2>&1 | head -1'
-        self.versions['varscan'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
+        if self.validate_utility('varscan', 'varscan is not on the PATH (required for AMR mutations)') :
+            command = 'varscan 2>&1 | head -1'
+            self.versions['varscan'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
                     
             
     @unless_only_basecall
@@ -1411,7 +1410,7 @@ class Analysis :
         if self.no_report :
             return
         
-        if len(self.analysis) == 0 :
+        if self.analysis == ['make_output_dir'] :
             return
 
         self.print_and_log('Validating reporting utilities', self.main_process_verbosity, self.main_process_color)
@@ -1434,7 +1433,7 @@ class Analysis :
 
         self.verbosity = 3
         
-        if len(sys.argv) > 2 :
+        if self.analysis != ['make_output_dir', 'clean_up'] :
             self.errors += ['Use --download without any other arguments']
         
         self.analysis = ['download_databases']
