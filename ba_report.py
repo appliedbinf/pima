@@ -498,7 +498,7 @@ class PimaReport:
         self.methods[self.plasmid_methods_title] = self.methods[self.plasmid_methods_title].append(pd.Series(method))
         
         method = 'Plasmid-to-genome hits were resolved using the pChunks algorithm.'
-        self.methods[self.plasmid_methods_title]  = self.methods[self.plasmids_methods_title].append(pd.Series(method))
+        self.methods[self.plasmid_methods_title]  = self.methods[self.plasmid_methods_title].append(pd.Series(method))
 
 
     def add_methods(self) :
