@@ -360,7 +360,7 @@ class PimaReport:
     def add_mutations(self) :
         
         # Make sure we looked for mutations
-        if self.analysis.amr_mutations.empty :
+        if not getattr(self.analysis, 'did_call_amr_mutations', False):
             return
         
         mutations = self.analysis.amr_mutations
@@ -401,7 +401,7 @@ class PimaReport:
     def add_amr_matrix(self) :
         
         # Make sure that we have an AMR matrix to plot
-        if not self.analysis.did_draw_amr_matrix :
+        if not getattr(self.analysis, 'did_draw_amr_matrix', False):
             return
         
         amr_matrix_png = self.analysis.amr_matrix_png
@@ -459,8 +459,9 @@ class PimaReport:
 
     def add_plasmids(self) :
         
-        if not self.analysis.did_call_plasmids :
+        if not getattr(self.analysis, 'did_call_plasmids', False):
             return
+        
         
         # Make sure we looked for mutations
         plasmids = self.analysis.plasmids
