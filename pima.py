@@ -282,7 +282,7 @@ class Analysis :
 
         # Demultiplexing
         self.multiplexed = opts.multiplexed
-        self.barcodes = pd.Series()
+        self.barcodes = pd.Series(dtype='float64')
         self.barcode_min_fraction = 0.025
         
         self.error_correct = opts.error_correct
@@ -337,8 +337,8 @@ class Analysis :
         self.no_inc = opts.no_inc
         
         self.feature_fastas = opts.feature
-        self.feature_hits = pd.Series()
-        self.feature_plots = pd.Series()
+        self.feature_hits = pd.Series(dtype='float64')
+        self.feature_plots = pd.Series(dtype='float64')
         self.feature_dirs = []
         self.feature_names = []
         self.feature_colors = []
@@ -370,26 +370,27 @@ class Analysis :
         self.analysis_name = opts.name
                 
         self.mutation_title = 'Mutations'
-        self.report[self.mutation_title] = pd.Series()
+        self.report[self.mutation_title] = pd.Series(dtype='float64')
 
-        self.large_indels = pd.Series()
+        self.large_indels = pd.Series(dtype='float64')
 
         self.plasmid_title = 'Plasmid annotation'
-        self.report[self.plasmid_title] = pd.Series()
+        self.report[self.plasmid_title] = pd.Series(dtype='float64')
 
         self.amr_matrix_title = 'AMR matrix'
-        self.report[self.amr_matrix_title] = pd.Series()
+        self.did_draw_amr_matrix = False
+        self.report[self.amr_matrix_title] = pd.Series(dtype='float64')
         
         self.methods_title = 'Methods summary'
-        self.report[self.methods_title] = pd.Series()
+        self.report[self.methods_title] = pd.Series(dtype='float64')
         self.basecalling_methods = 'Basecalling & processing'
-        self.report[self.methods_title][self.basecalling_methods] = pd.Series()
+        self.report[self.methods_title][self.basecalling_methods] = pd.Series(dtype='float64')
         self.assembly_methods = 'Assembly & polishing'
-        self.report[self.methods_title][self.assembly_methods] = pd.Series()
+        self.report[self.methods_title][self.assembly_methods] = pd.Series(dtype='float64')
         self.mutation_methods = 'Mutation screening '
-        self.report[self.methods_title][self.mutation_methods] = pd.Series()
+        self.report[self.methods_title][self.mutation_methods] = pd.Series(dtype='float64')
         self.plasmid_methods = 'Plasmid annotation'
-        self.report[self.methods_title][self.plasmid_methods] = pd.Series()
+        self.report[self.methods_title][self.plasmid_methods] = pd.Series(dtype='float64')
         
         self.meta_title = 'PIMA meta-information'
         
@@ -1299,9 +1300,9 @@ class Analysis :
 
         # Either from the built in set or given as an argument, make sure the file is there
         if self.validate_file_and_size(self.mutation_region_bed, min_size = 100) :
-            self.mutation_regions = pd.read_csv(self.mutation_region_bed, header = 0, sep = '\t', index_col = False)
+            self.mutation_regions = pd.read_csv(self.mutation_region_bed, header = 0,delim_whitespace=True, index_col = False)
 
-            if self.mutation_regions.shape[1] != 7 :
+            if self.mutation_regions.shape[1] != 6 :
                 self.errors += ['Mutation regions should be a six column file.']
 
             elif self.mutation_regions.shape[0] == 0 :
@@ -1351,7 +1352,9 @@ class Analysis :
 
         if self.validate_utility('varscan', 'varscan is not on the PATH (required for AMR mutations)') :
             command = 'varscan 2>&1 | head -1'
-            self.versions['varscan'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[0]).group(0)
+            quickcheck = self.print_and_run(command)[0]
+            print(quickcheck)
+            self.versions['varscan'] = re.search('[0-9]+\\.[0-9.]*', quickcheck).group(0)
                     
             
     @unless_only_basecall
@@ -2910,7 +2913,7 @@ class Analysis :
 
             region  = self.mutation_regions.iloc[region_i, :]
 
-            if not region['type'] in ['snp', 'small-indel', 'any'] :
+            if not region.get('type', default='No Type') in ['snp', 'small-indel', 'any'] :
                 continue
 
             self.print_and_log('Finding AMR mutations for ' + region['name'],
@@ -3288,6 +3291,7 @@ class Analysis :
         plt.savefig(amr_matrix_png, dpi = 300)
 
         self.report[self.amr_matrix_title]['png'] = 'amr_matrix.png'
+        self.did_draw_amr_matrix = True
         
             
     def make_report(self) :

@@ -38,21 +38,21 @@ class PimaReport:
         self.mutation_title = 'Mutations found in the sample'
         self.amr_matrix_title = 'AMR matrix'
         
-        self.methods = pd.Series()
+        self.methods = pd.Series(dtype='float64')
         self.methods_title = 'Methods'
         self.basecalling_methods_title = 'Basecalling'
         self.contamination_methods_title = 'Contamination check'
-        self.methods[self.contamination_methods_title] = pd.Series()
+        self.methods[self.contamination_methods_title] = pd.Series(dtype='float64')
         self.assembly_methods_title = 'Assembly'
-        self.methods[self.assembly_methods_title] = pd.Series()
+        self.methods[self.assembly_methods_title] = pd.Series(dtype='float64')
         self.reference_methods_title = 'Reference comparison'
-        self.methods[self.reference_methods_title] = pd.Series()
+        self.methods[self.reference_methods_title] = pd.Series(dtype='float64')
         self.mutation_methods_title = 'Mutation screening'
-        self.methods[self.mutation_methods_title] = pd.Series()
+        self.methods[self.mutation_methods_title] = pd.Series(dtype='float64')
         self.feature_methods_title = 'Feature annotation'
-        self.methods[self.feature_methods_title] = pd.Series()
+        self.methods[self.feature_methods_title] = pd.Series(dtype='float64')
         self.plasmid_methods_title = 'Plasmid annotation'
-        self.methods[self.plasmid_methods_title] = pd.Series()
+        self.methods[self.plasmid_methods_title] = pd.Series(dtype='float64')
         
         
     def start_doc(self) :
@@ -360,7 +360,7 @@ class PimaReport:
     def add_mutations(self) :
         
         # Make sure we looked for mutations
-        if not self.analysis.did_call_amr_mutations :
+        if self.analysis.amr_mutations.empty :
             return
         
         mutations = self.analysis.amr_mutations
