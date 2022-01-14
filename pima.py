@@ -1300,9 +1300,9 @@ class Analysis :
 
         # Either from the built in set or given as an argument, make sure the file is there
         if self.validate_file_and_size(self.mutation_region_bed, min_size = 100) :
-            self.mutation_regions = pd.read_csv(self.mutation_region_bed, header = 0,delim_whitespace=True, index_col = False)
+            self.mutation_regions = pd.read_csv(self.mutation_region_bed, header = 0, sep = '\t', index_col = False)
 
-            if self.mutation_regions.shape[1] != 6 :
+            if self.mutation_regions.shape[1] != 7 ::
                 self.errors += ['Mutation regions should be a six column file.']
 
             elif self.mutation_regions.shape[0] == 0 :
