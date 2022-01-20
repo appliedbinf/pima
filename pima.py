@@ -3291,6 +3291,7 @@ class Analysis :
         plt.savefig(amr_matrix_png, dpi = 300)
 
         self.report[self.amr_matrix_title]['png'] = 'amr_matrix.png'
+        self.amr_matrix_png = amr_matrix_png #Added by Nolan to fix error 1/20/2022
         self.did_draw_amr_matrix = True
         
             
