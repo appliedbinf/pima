@@ -6,11 +6,14 @@
       * [Dependencies](#dependencies)
          * [Software](#software)
       * [Cloning PiMA pipeline](#Cloning-PiMA-pipeline)
+      * [Quickstart guide](#Quickstart-guide)
+      * [Software](#software)
       * [Manual install (not recommended)](#manual-install-not-recommended)
-         * [Software](#software-1)
-   * [Quickstart / demo](#quickstart--demo)
-   * [Usage](#usage)
-   * [Using your own data](#using-your-own-data)
+         * [Basic usage](#Basic-usage)
+         * [General program structure overview](#General-program-structure-overview)
+      * [Input file format](#Input-file-format)
+      * [A typical run](#A-typical-run)
+   * [Documentation for the full run](#Documentation-for-the-full-run)
 
 
 PIMA (Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline) is a high-throughput sequence analysis pipeline.  PIMA is an end-to-end solution encompassing all the steps required to transform raw ONT output into high-quality annotated assemblies.  PIMA supports providing optional Illumina paired end reads for polishing and error correcting assemblies.
