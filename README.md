@@ -46,6 +46,24 @@ conda env create -f pima.yml
 ```
 ## Dependencies
 
+### Software
+* BCFtools & Samtools: http://www.htslib.org/
+* bedtools: https://bedtools.readthedocs.io/en/latest/
+* NCBI BLAST+ (v 2.8+): https://blast.ncbi.nlm.nih.gov/Blast.cgi
+* bwa: https://github.com/lh3/bwa
+* flye: https://github.com/fenderglass/Flye
+* Medaka: https://github.com/nanoporetech/medaka
+* miniasm: https://github.com/lh3/miniasm
+* minimap2: https://github.com/lh3/minimap2
+* nanopolish: https://github.com/jts/nanopolish
+* parallel: https://www.gnu.org/software/parallel/
+* Pilon: https://github.com/broadinstitute/pilon/wiki
+* Porechop: https://github.com/rrwick/Porechop
+* qcat: https://github.com/nanoporetech/qcat
+* SAMtools: http://htslib.org/
+* SPAdes: http://cab.spbu.ru/software/spades/
+* wtdbg2: https://github.com/ruanjue/wtdbg2
+
 ```bash
 # You can also install the dependencies while creating the PiMA base environment.
 conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
@@ -223,25 +241,7 @@ Other options:
 ```
 
 
-### Software
-* BCFtools & Samtools: http://www.htslib.org/
-* bedtools: https://bedtools.readthedocs.io/en/latest/
-* NCBI BLAST+ (v 2.8+): https://blast.ncbi.nlm.nih.gov/Blast.cgi
-* bwa: https://github.com/lh3/bwa
-* flye: https://github.com/fenderglass/Flye
-* LoRDEC: http://www.atgc-montpellier.fr/lordec/
-* Medaka: https://github.com/nanoporetech/medaka
-* miniasm: https://github.com/lh3/miniasm
-* minimap2: https://github.com/lh3/minimap2
-* nanopolish: https://github.com/jts/nanopolish
-* parallel: https://www.gnu.org/software/parallel/
-* Pilon: https://github.com/broadinstitute/pilon/wiki
-* Porechop: https://github.com/rrwick/Porechop
-* qcat: https://github.com/nanoporetech/qcat
-* racon: https://github.com/isovic/racon
-* SAMtools: http://htslib.org/
-* SPAdes: http://cab.spbu.ru/software/spades/
-* wtdbg2: https://github.com/ruanjue/wtdbg2
+
 
 ### Python modules and programs
 
