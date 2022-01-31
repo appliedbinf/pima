@@ -6,8 +6,6 @@
       * [Dependencies](#dependencies)
          * [Software](#software)
       * [Cloning PiMA pipeline](#Cloning PiMA pipeline)
-         
-         
       * [Manual install (not recommended)](#manual-install-not-recommended)
          * [Software](#software-1)
    * [Quickstart / demo](#quickstart--demo)
