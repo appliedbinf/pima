@@ -7,8 +7,6 @@
          * [Software](#software)
       * [Cloning PiMA pipeline](#Cloning-PiMA-pipeline)
       * [Quickstart guide](#Quickstart-guide)
-      * [Software](#software)
-      * [Manual install (not recommended)](#manual-install-not-recommended)
          * [Basic usage](#Basic-usage)
          * [General program structure overview](#General-program-structure-overview)
       * [Input file format](#Input-file-format)
