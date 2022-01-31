@@ -100,14 +100,38 @@ The input file can be in fast5 format (use the --ont-fast5 flag for fast5 files)
 Here is an example of a basic run using fast5 files as input.
 
 ```bash
-
+# basic command
 ./pima.py --output output_folder --ont-fast5 fast5_files --genome-size 5M --threads 12
 
 ## to run kraken, plasmids, quast, and mutations, the following command should be used
-
-pima.py --out out --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m --verb 3 --reference-genome ref_genome.fasta --mutation-regions mutation_regions.bed
+pima.py --out out --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m --verb 3 --reference-genome ref_genome.fasta --mutation-regions mutation_regions.bed --plasmids
 
 ```
+Consider an example scenario where you want to assemble Bacillus anthracis ont reads. If the reference files is named ref.fasta 
+and the query fast5 files are in the folder named barcodes_folder, the mutation regions bed file is names mutation_regions.bed 
+and the output folder you named is ont_output then your pima command will look as follows:
+
+```bash
+pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m --verb 3 --reference-genome ref.fasta --mutation-regions mutation_regions.bed
+
+```
+I prefer to run PiMA using the verbose flag and my hardware can support upto 20 threads. 
+Feel free to turn off the verbose flag if you so desire, and change the number of threads in accordance with your hardware 
+capability. This command will create the following outputs listed in no particular order:
+
+1. ont_assembly: Folder with the assembly metrics and the fasta file
+2. ont_fastq: Folder with the raw_fastq file that is used to generate the assembly and the guppy run
+3. quast: Folder with the quality metrics and the quast report
+4. downsample: folder with a fastq with a subset of a high-coverage data set to a given average coverage
+5. medaka: folder with the consensus sequence
+6. drawing: provides the contig plot
+7. insertions: provides information on the alignment with the reference, alignment coordinates, any snps and report generated with this information.
+8. circos
+9. mutations
+10. report
+11. info
+12. features
+## Documentation for the full run
 The full description of each commandline option is provided below.
 
 ```bash
@@ -202,30 +226,7 @@ Other options:
   --bundle <PATH>                             Local Tectonic bundle (default : None)
   --fake-run                                  Don't actually run the pipeline, just pretend to (default : False)
 ```
-Consider an example scenario where you want to assemble Bacillus anthracis ont reads. If the reference files is named ref.fasta 
-and the query fast5 files are in the folder named barcodes_folder, the mutation regions bed file is names mutation_regions.bed 
-and the output folder you named is ont_output then your pima command will look as follows:
 
-```bash
-pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m --verb 3 --reference-genome ref.fasta --mutation-regions mutation_regions.bed
-
-```
-I prefer to run PiMA using the verbose flag and my hardware can support upto 20 threads. 
-Feel free to turn off the verbose flag if you so desire, and change the number of threads in accordance with your hardware 
-capability. This command will create the following outputs listed in no particular order:
-
-1. ont_assembly: Folder with the assembly metrics and the fasta file
-2. ont_fastq: Folder with the raw_fastq file that is used to generate the assembly and the guppy run
-3. quast: Folder with the quality metrics and the quast report
-4. downsample: folder with a fastq with a subset of a high-coverage data set to a given average coverage
-5. medaka: folder with the consensus sequence
-6. drawing: provides the contig plot
-7. insertions: provides information on the alignment with the reference, alignment coordinates, any snps and report generated with this information.
-8. circos
-9. mutations
-10. report
-11. info
-12. features
 
 ### Software
 * BCFtools & Samtools: http://www.htslib.org/
