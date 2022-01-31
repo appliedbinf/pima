@@ -5,7 +5,9 @@
       * [Conda environments](#conda-environments)
       * [Dependencies](#dependencies)
          * [Software](#software)
-         * [Python modules and programs](#python-modules-and-programs)
+      * [Cloning PiMA pipeline](#Cloning PiMA pipeline)
+         
+         
       * [Manual install (not recommended)](#manual-install-not-recommended)
          * [Software](#software-1)
    * [Quickstart / demo](#quickstart--demo)
