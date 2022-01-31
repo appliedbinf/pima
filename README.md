@@ -70,7 +70,7 @@ pima.py --download
 ```
 ## Quickstart guide
 ## Basic usage
-# General program structure overview
+### General program structure overview
 PiMA is a multi-step process that can be run as a single command - base calling, checking for contamination, assembly, generating a quast report, identifying any mutations based on the reference file provided.
 
 1. Base calling: this step uses guppy as the tool for base calling. This process is not required if a fastq file is used as the input.
