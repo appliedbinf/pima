@@ -73,13 +73,6 @@ pima.py --download
 ### General program structure overview
 PiMA is a multi-step process that can be run as a single command - base calling, checking for contamination, assembly, generating a quast report, identifying any mutations based on the reference file provided.
 
-1. Base calling: this step uses guppy as the tool for base calling. This process is not required if a fastq file is used as the input.
-2. Contamination: kraken is used to determine the taxonomy of the sample and identify any contamination
-3. Assembly: performed using flye
-4. Quality assessment: quast report is generated to get the assembly metrics
-5. Mutations and amr markers: Presence of mutations and amr markers can be identified based on the reference file 
-provided. The refence used here is B. anthracis str. Ames Ancestor.
-
 ```bash
 usage: pima.py [--help] 
 
