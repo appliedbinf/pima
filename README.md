@@ -29,7 +29,7 @@ The PIMA pipeline performs the following actions [Analysis program options in br
 11. Comparison to reference genome, including variant calling and annotation
 
 Codebase stage: development   
-Developers and maintainers: Andrew Conley, Lavanya Rishishwar
+Developers and maintainers: Andrew Conley, Lavanya Rishishwar   
 Testers: Lavanya Rishishwar, Andrew Conley, Vasanta Chivukula, Nolan English
 
 # Installation
