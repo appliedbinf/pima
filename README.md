@@ -142,7 +142,7 @@ capability. This command will create the following outputs listed in no particul
 9. mutations: includes files with information on mapping with the reference and the snps identified.
 10. report: A final report in a pdf format describing the assemblies and other information pertaining to the assembled genome (such as mutations, amr genes identified).
 11. info: provides the coverage information based on mapping to a reference (ont_coverage.tsv).
-12. features: provides information on the presence of amr genes and any inserions, if present in the assembled genome.
+12. features: provides information on the presence of amr genes and any inserions, if present in the assembled genome. If there are no insertions or amr genes then you will get an empty file.
 
 
 ## Documentation for the full run
