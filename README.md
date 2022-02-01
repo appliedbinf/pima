@@ -116,7 +116,7 @@ Here is an example of a basic run using fast5 files as input.
 ./pima.py --output output_folder --ont-fast5 fast5_files --genome-size 5M --threads 12
 
 ## to run kraken, plasmids, quast, and mutations, the following command should be used
-pima.py --out out --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m --verb 3 --reference-genome ref_genome.fasta --mutation-regions mutation_regions.bed --plasmids
+pima.py --out out --ont-fast5 barcodes_folder --threads 16 --contamination --overwrite --genome-size 5m --verb 3 --reference-genome ref_genome.fasta --mutation-regions mutation_regions.bed --plasmids
 
 ```
 Consider an example scenario where you want to assemble Bacillus anthracis ont reads. If the reference files is named ref.fasta 
