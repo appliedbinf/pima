@@ -131,17 +131,17 @@ I prefer to run PiMA using the verbose flag and my hardware can support upto 20 
 Feel free to turn off the verbose flag if you so desire, and change the number of threads in accordance with your hardware 
 capability. This command will create the following outputs listed in no particular order:
 
-1. ont_assembly: Folder with the assembly metrics and the fasta file
+1. ont_assembly: Folder with the assembly metrics and the fasta file (assembly.fasta).
 2. ont_fastq: Folder with the raw_fastq file that is used to generate the assembly and the guppy run.
 3. quast: Folder with the quality metrics and the quast report.
 4. downsample: folder with a fastq with a subset of a high-coverage data set to a given average coverage.
-5. medaka: folder with the consensus sequence.
+5. medaka: folder with the consensus sequence (consensus.fasta).
 6. drawing: provides the contig plot.
 7. insertions: provides information on the alignment with the reference, alignment coordinates, any snps and report generated with this information.
 8. circos: provides svg and png files with visuals of the chromosome and plasmids (if present).
 9. mutations: includes files with information on mapping with the reference and the snps identified.
 10. report: A final report in a pdf format describing the assemblies and other information pertaining to the assembled genome (such as mutations, amr genes identified).
-11. info: provides the coverage information based on mapping to a reference.
+11. info: provides the coverage information based on mapping to a reference (ont_coverage.tsv).
 12. features: provides information on the presence of amr genes and any inserions, if present in the assembled genome.
 
 
