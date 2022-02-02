@@ -35,7 +35,6 @@ Developers and maintainers: Andrew Conley, Lavanya Rishishwar
 Testers: Lavanya Rishishwar, Andrew Conley, Vasanta Chivukula, Nolan English
 
 # Installation
-We are working on improving the user experience with PiMA. This section will be updated with easier installation procedure for PiMA and it's dependencies.
 A docker image of this pipeline prebuilt with the dependencies is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline.
 
 ## Conda environments
@@ -147,7 +146,7 @@ capability. This command will create the following outputs listed in no particul
 ## All available arguments
 The full description of each commandline option is provided below.
 
-```bash
+```
 
 usage: pima.py [--help] [--version] [--ont-watch <ONT_DIR>] [--ont-watch-min-reads <INT>] [--ont-watch-max-time <HOURS>]
                [--ont-watch-between-time <MINUTES>] [--ont-watch-min-coverage <X>] [--ont-fast5 <ONT_DIR>]
