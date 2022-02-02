@@ -45,8 +45,16 @@ We **highly** recommend using the supplied Conda environments for installing and
 conda env create -f pima.yml
 
 ```
-## Dependencies
+## Non-conda installation and dependencies
 
+```bash
+# You can also install the dependencies while creating the PiMA base environment.
+conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
+
+# Some more dependencies (si_prefix, dna_features_viewer, and quast) installed using pip installer
+pip install si_prefix dna_features_viewer
+pip install git+https://github.com/ablab/quast
+```
 ### Software
 * BCFtools & Samtools: http://www.htslib.org/
 * bedtools: https://bedtools.readthedocs.io/en/latest/
@@ -65,16 +73,8 @@ conda env create -f pima.yml
 * SPAdes: http://cab.spbu.ru/software/spades/
 * wtdbg2: https://github.com/ruanjue/wtdbg2
 
-```bash
-# You can also install the dependencies while creating the PiMA base environment.
-conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
 
-# Some more dependencies (si_prefix, dna_features_viewer, and quast) installed using pip installer
-pip install si_prefix dna_features_viewer
-pip install git+https://github.com/ablab/quast
-```
-
-## Cloning PiMA pipeline
+### Installing PiMA
 
 ```bash
 # Activate the conda environement using
@@ -115,12 +115,9 @@ Here is an example of a basic run using fast5 files as input.
 # basic command
 ./pima.py --output output_folder --ont-fast5 fast5_files --genome-size 5M --threads 12
 
-## to run kraken, plasmids, quast, and mutations, the following command should be used
-pima.py --out out --ont-fast5 barcodes_folder --threads 16 --contamination --overwrite --genome-size 5m --verb 3 --reference-genome ref_genome.fasta --mutation-regions mutation_regions.bed --plasmids
-
 ```
-Consider an example scenario where you want to assemble Bacillus anthracis ont reads. If the reference files is named ref.fasta 
-and the query fast5 files are in the folder named barcodes_folder, the mutation regions bed file is names mutation_regions.bed 
+Consider an example scenario where you want to assemble Bacillus anthracis ont reads. If the reference file is named ref.fasta 
+and the query fast5 files are in the folder named barcodes_folder, the mutation regions bed file is named mutation_regions.bed 
 and the output folder you named is ont_output then your pima command will look as follows:
 
 ```bash
@@ -145,7 +142,7 @@ capability. This command will create the following outputs listed in no particul
 12. features: provides information on the presence of amr genes and any inserions, if present in the assembled genome. If there are no insertions or amr genes then you will get an empty file.
 
 
-## Documentation for the full run
+## All available arguments
 The full description of each commandline option is provided below.
 
 ```bash
@@ -210,12 +207,12 @@ Plasmid and vector search options:
 
 AMR gene search options:
   --amr-database <AMR_FASTA>                  Path to a FASTA file with AMR gene sequences (default :
-                                              /data/home/vchivukula7/pima/data/amr.fasta)
+                                              pima/data/amr.fasta)
   --no-amr                                    Skip AMR search (default : False)
 
 Incompatibility group search options:
   --inc-database <INC_FASTA>                  Path to a FASTA file with incompatibility group sequences (default :
-                                              /data/home/vchivukula7/pima/data/inc.fasta)
+                                              pima/data/inc.fasta)
   --no-inc                                    Skip incompatibility group search (default : False)
 
 Other feature search options:
@@ -226,7 +223,7 @@ Drawing options:
 
 Reference options:
   --reference-dir <REFERNCE_DIR>              Directory containing refrence organisms (default :
-                                              /data/home/vchivukula7/pima/data/reference_sequences)
+                                              pima/data/reference_sequences)
   --organism <ORGANISM>                       Reference organism to compare against
   --list-organisms                            List the reference organisms available to this pipeline
   --auto-reference                            Automatically choose an appropriate reference if available.
