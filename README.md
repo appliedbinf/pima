@@ -3,15 +3,16 @@
   * [PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline](#pima-plasmid-integrations-mutations-and-antibiotic-resistance-annotation-pipeline)
    * [Installation](#installation)
       * [Conda environments](#conda-environments)
-      * [Dependencies](#dependencies)
+      * [Non-conda installation and dependencies](#Non-conda-installation-and-dependencies)
          * [Software](#software)
-      * [Cloning PiMA pipeline](#Cloning-PiMA-pipeline)
+         * [Installing PiMA](#Installing-PiMA)
       * [Quickstart guide](#Quickstart-guide)
          * [Basic usage](#Basic-usage)
          * [General program structure overview](#General-program-structure-overview)
       * [Input file format](#Input-file-format)
       * [A typical run](#A-typical-run)
-   * [Documentation for the full run](#Documentation-for-the-full-run)
+   * [All available arguments](#All-available-arguments)
+   * [Literature Citations](#Literature-Citations)
 
 
 PIMA (Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline) is a high-throughput sequence analysis pipeline.  PIMA is an end-to-end solution encompassing all the steps required to transform raw ONT output into high-quality annotated assemblies.  PIMA supports providing optional Illumina paired end reads for polishing and error correcting assemblies.
@@ -237,11 +238,6 @@ Other options:
   --bundle <PATH>                             Local Tectonic bundle (default : None)
   --fake-run                                  Don't actually run the pipeline, just pretend to (default : False)
 ```
-
-
-
-
-### Python modules and programs
 
 
 ## Literature Citations
