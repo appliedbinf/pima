@@ -36,6 +36,7 @@ Testers: Lavanya Rishishwar, Andrew Conley, Vasanta Chivukula, Nolan English
 
 # Installation
 We are working on improving the user experience with PiMA. This section will be updated with easier installation procedure for PiMA and it's dependencies.
+A docker image of this pipeline prebuilt with the dependencies is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline.
 
 ## Conda environments
 
