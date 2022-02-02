@@ -93,7 +93,7 @@ pima.py --download
 ### General program structure overview
 PiMA is a multi-step process that can be run as a single command - base calling, checking for contamination, assembly, generating a quast report, identifying any mutations based on the reference file provided.
 
-```bash
+```
 usage: pima.py [--help] 
 
 pima.py - Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
