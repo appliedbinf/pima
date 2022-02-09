@@ -42,7 +42,7 @@ A docker image of this pipeline prebuilt with the dependencies is available at h
 ## Conda environments
 PiMA pipeline can also be installed using conda environment. This might give some issues as all the dependencies are not installed properly at times.
 
-```bash
+```
 # Install the PIMA base environment (Python 3.6)
 conda env create -f pima.yml
 
@@ -61,7 +61,7 @@ pip install git+https://github.com/ablab/quast
 ```
 ### Installing PiMA
 
-```bash
+```
 # Activate the conda environement using
 conda activa pima
 
@@ -78,7 +78,7 @@ pima.py --download
 
 Here is an example of a basic run using fast5 files as input.
 
-```bash
+```
 # basic command
 ./pima.py --output output_folder --ont-fast5 fast5_files --genome-size 5M --threads 12
 
@@ -87,7 +87,7 @@ Consider an example scenario where you want to assemble Bacillus anthracis ont r
 and the query fast5 files are in the folder named barcodes_folder, the mutation regions bed file is named mutation_regions.bed 
 and the output folder you named is ont_output then your pima command will look as follows:
 
-```bash
+```
 pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m \
 --verb 3 --reference-genome ref.fasta --mutation-regions mutation_regions.bed
 
