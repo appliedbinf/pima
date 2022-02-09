@@ -223,7 +223,8 @@ Other options:
   --bundle <PATH>                             Local Tectonic bundle (default : None)
   --fake-run                                  Don't actually run the pipeline, just pretend to (default : False)
 ```
-
+The --genome-size option where the Genome size estimate for the assembly must be provided is recommended but not required. 
+For error correcting purposes, if illumina reads are used along with ONT reads, this pipeline will map the illumina reads against the ONT assembly. It will then pass the resulting BAM file, and the ONT assembly into Pilon.  This will give us a new assembly with error corrections in ONT assembly.
 
 ## Literature Citations
 - McLaughlin HP, Bugrysheva JV, Conley AB, Gulvik CA, Kolton CB, Marston C, Swaney E, Lonsway DR, Cherney B, Gargis AS, Kongphet-Tran T, Lascols C, Michel P, Villanueva J, Hoffmaster ER, Gee JE, Sue D. 2020. When minutes matter: rapid nanopore whole genome sequencing for anthrax emergency preparedness. Emerging Infectious Diseases
