@@ -4,7 +4,6 @@
    * [Installation](#installation)
       * [Conda environments](#conda-environments)
       * [Non-conda installation and dependencies](#Non-conda-installation-and-dependencies)
-         * [Software](#software)
          * [Installing PiMA](#Installing-PiMA)
       * [Quickstart guide](#Quickstart-guide)
          * [Basic usage](#Basic-usage)
@@ -13,6 +12,7 @@
       * [A typical run](#A-typical-run)
    * [All available arguments](#All-available-arguments)
    * [Literature Citations](#Literature-Citations)
+   * [Software](#software)
 
 
 PIMA (Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline) is a high-throughput sequence analysis pipeline.  PIMA is an end-to-end solution encompassing all the steps required to transform raw ONT output into high-quality annotated assemblies.  PIMA supports providing optional Illumina paired end reads for polishing and error correcting assemblies.
@@ -34,19 +34,22 @@ Codebase stage: development
 Developers and maintainers: Andrew Conley, Lavanya Rishishwar   
 Testers: Lavanya Rishishwar, Andrew Conley, Vasanta Chivukula, Nolan English
 
+PiMA pipeline requires Python 3.6 or higher version. If running the basecaller using GPU is advised.
+
 # Installation
-A docker image of this pipeline prebuilt with the dependencies is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline.
+## Install using docker
+A docker image of this pipeline prebuilt with the dependencies is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline. This is the easiest way to load and run the pipeline.
 
 ## Conda environments
-
-We **highly** recommend using the supplied Conda environments for installing and managing all the dependencies for PIMA.  
+PiMA pipeline can also be installed using conda environment. This might give some issues as all the dependencies are not installed properly at times.
 
 ```bash
 # Install the PIMA base environment (Python 3.6)
 conda env create -f pima.yml
 
 ```
-## Non-conda installation and dependencies
+## Creating conda environment and loading the dependencies
+If you want to create your own conda environment and load all the dependencies then this is the way to install the pipeline.
 
 ```bash
 # You can also install the dependencies while creating the PiMA base environment.
@@ -56,25 +59,6 @@ conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samto
 pip install si_prefix dna_features_viewer
 pip install git+https://github.com/ablab/quast
 ```
-### Software
-* BCFtools & Samtools: http://www.htslib.org/
-* bedtools: https://bedtools.readthedocs.io/en/latest/
-* NCBI BLAST+ (v 2.8+): https://blast.ncbi.nlm.nih.gov/Blast.cgi
-* bwa: https://github.com/lh3/bwa
-* flye: https://github.com/fenderglass/Flye
-* Medaka: https://github.com/nanoporetech/medaka
-* miniasm: https://github.com/lh3/miniasm
-* minimap2: https://github.com/lh3/minimap2
-* nanopolish: https://github.com/jts/nanopolish
-* parallel: https://www.gnu.org/software/parallel/
-* Pilon: https://github.com/broadinstitute/pilon/wiki
-* Porechop: https://github.com/rrwick/Porechop
-* qcat: https://github.com/nanoporetech/qcat
-* SAMtools: http://htslib.org/
-* SPAdes: http://cab.spbu.ru/software/spades/
-* wtdbg2: https://github.com/ruanjue/wtdbg2
-
-
 ### Installing PiMA
 
 ```bash
@@ -89,24 +73,6 @@ pima.py --download
 
 ```
 ## Quickstart guide
-## Basic usage
-### General program structure overview
-PiMA is a multi-step process that can be run as a single command - base calling, checking for contamination, assembly, generating a quast report, identifying any mutations based on the reference file provided.
-
-```
-usage: pima.py [--help] 
-
-pima.py - Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
-
-optional arguments:
-  --help, -h, --h
-  
-pima.py command: pima.py --output <your output folder name> --ont-fast5 <where the input fast5 files are located> --genome-size <5M for Ba; genome size in Mb> --threads <number of parallel threads; 12 is the maximum>
-
-```
-### Input file format
-
-The input file can be in fast5 format (use the --ont-fast5 flag for fast5 files) or fastq format (the flag would be --ont-fastq). 
 
 ### A typical run
 
@@ -141,6 +107,26 @@ capability. This command will create the following outputs listed in no particul
 10. report: A final report in a pdf format describing the assemblies and other information pertaining to the assembled genome (such as mutations, amr genes identified).
 11. info: provides the coverage information based on mapping to a reference (ont_coverage.tsv).
 12. features: provides information on the presence of amr genes and any inserions, if present in the assembled genome. If there are no insertions or amr genes then you will get an empty file.
+
+### General program structure overview
+PiMA is a multi-step process that can be run as a single command - base calling, checking for contamination, assembly, generating a quast report, identifying any mutations based on the reference file provided.
+
+```
+usage: pima.py [--help] 
+
+pima.py - Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
+
+optional arguments:
+  --help, -h, --h
+  
+pima.py command: pima.py --output <your output folder name> --ont-fast5 <where the input fast5 files are located> --genome-size <5M for Ba; genome size in Mb> --threads <number of parallel threads; 12 is the maximum>
+
+```
+### Input file format
+
+The input file can be in fast5 format (use the --ont-fast5 flag for fast5 files) or fastq format (the flag would be --ont-fastq). 
+
+
 
 
 ## All available arguments
@@ -252,3 +238,21 @@ Other options:
 - [racon](https://www.ncbi.nlm.nih.gov/pubmed/28100585)
 - [SPAdes](https://www.ncbi.nlm.nih.gov/pubmed/22506599)
 - [Wtdbg2](https://www.nature.com/articles/s41592-019-0669-3)
+
+### Software
+* BCFtools & Samtools: http://www.htslib.org/
+* bedtools: https://bedtools.readthedocs.io/en/latest/
+* NCBI BLAST+ (v 2.8+): https://blast.ncbi.nlm.nih.gov/Blast.cgi
+* bwa: https://github.com/lh3/bwa
+* flye: https://github.com/fenderglass/Flye
+* Medaka: https://github.com/nanoporetech/medaka
+* miniasm: https://github.com/lh3/miniasm
+* minimap2: https://github.com/lh3/minimap2
+* nanopolish: https://github.com/jts/nanopolish
+* parallel: https://www.gnu.org/software/parallel/
+* Pilon: https://github.com/broadinstitute/pilon/wiki
+* Porechop: https://github.com/rrwick/Porechop
+* qcat: https://github.com/nanoporetech/qcat
+* SAMtools: http://htslib.org/
+* SPAdes: http://cab.spbu.ru/software/spades/
+* wtdbg2: https://github.com/ruanjue/wtdbg2
