@@ -52,8 +52,8 @@ If you want to create your own conda environment and load all the dependencies t
 
 ```bash
 # You can also install the dependencies while creating the PiMA base environment.
-conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools\
-                     bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
+conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools \
+bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
 
 # Some more dependencies (si_prefix, dna_features_viewer, and quast) installed using pip installer
 pip install si_prefix dna_features_viewer
@@ -88,7 +88,8 @@ and the query fast5 files are in the folder named barcodes_folder, the mutation 
 and the output folder you named is ont_output then your pima command will look as follows:
 
 ```bash
-pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m --verb 3 --reference-genome ref.fasta --mutation-regions mutation_regions.bed
+pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m \
+--verb 3 --reference-genome ref.fasta --mutation-regions mutation_regions.bed
 
 ```
 I prefer to run PiMA using the verbose flag and my hardware can support upto 20 threads. 
@@ -119,7 +120,8 @@ pima.py - Plasmid, Integrations, Mutations, and Antibiotic resistance annotation
 optional arguments:
   --help, -h, --h
   
-pima.py command: pima.py --output <your output folder name> --ont-fast5 <where the input fast5 files are located> --genome-size <5M for Ba; genome size in Mb> --threads <number of parallel threads; 12 is the maximum>
+pima.py command: pima.py --output <your output folder name> --ont-fast5 <where the input fast5 files are located> \
+--genome-size <5M for Ba; genome size in Mb> --threads <number of parallel threads; 12 is the maximum>
 
 ```
 ### Input file format
