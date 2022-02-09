@@ -52,7 +52,8 @@ If you want to create your own conda environment and load all the dependencies t
 
 ```bash
 # You can also install the dependencies while creating the PiMA base environment.
-conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
+conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools /
+                     bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
 
 # Some more dependencies (si_prefix, dna_features_viewer, and quast) installed using pip installer
 pip install si_prefix dna_features_viewer
