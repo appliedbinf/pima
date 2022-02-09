@@ -125,9 +125,6 @@ pima.py command: pima.py --output <your output folder name> --ont-fast5 <where t
 
 The input file can be in fast5 format (use the --ont-fast5 flag for fast5 files) or fastq format (the flag would be --ont-fastq). 
 
-
-
-
 ## All available arguments
 The full description of each commandline option is provided below.
 
@@ -223,7 +220,8 @@ Other options:
   --bundle <PATH>                             Local Tectonic bundle (default : None)
   --fake-run                                  Don't actually run the pipeline, just pretend to (default : False)
 ```
-The --genome-size option where the Genome size estimate for the assembly must be provided is recommended but not required. 
+The --genome-size option where the genome size estimate for the assembly must be provided is recommended but not required.
+
 For error correcting purposes, if illumina reads are used along with ONT reads, this pipeline will map the illumina reads against the ONT assembly. It will then pass the resulting BAM file, and the ONT assembly into Pilon.  This will give us a new assembly with error corrections in ONT assembly.
 
 ## Literature Citations
