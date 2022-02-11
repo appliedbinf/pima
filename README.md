@@ -2,9 +2,9 @@
 
   * [PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline](#pima-plasmid-integrations-mutations-and-antibiotic-resistance-annotation-pipeline)
    * [Installation](#installation)
-      * [Conda environments](#conda-environments)
-      * [Non-conda installation and dependencies](#Non-conda-installation-and-dependencies)
-         * [Installing PiMA](#Installing-PiMA)
+      * [Method 1. Preferred - Install using docker](#method-1-preferred-install-using-docker)
+      * [Method 2. Using conda yml script](#method-2-using-conda-yml-script)
+      * [Method 3. Creating conda environment and loading the dependencies](#method-3-Creating-conda-environment-and-loading-the-dependencies)
       * [Quickstart guide](#Quickstart-guide)
          * [A typical run](#A-typical-run)
          * [General program structure overview](#General-program-structure-overview)
