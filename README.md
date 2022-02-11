@@ -12,10 +12,10 @@
    * [All available arguments](#All-available-arguments)
    * [Literature Citations](#Literature-Citations)
    * [Software](#software)
-
-
+  
+  
 PIMA (Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline) is a high-throughput sequence analysis pipeline.  PIMA is an end-to-end solution encompassing all the steps required to transform raw ONT output into high-quality annotated assemblies.  PIMA supports providing optional Illumina paired end reads for polishing and error correcting assemblies.
-
+  
 The PIMA pipeline performs the following actions [Analysis program options in brackets, default first]:
 1. Performs basecalling from FAST5 files [guppy or albacore]
 2. Demultiplexes basecalled ONT data (FASTQ files) [qcat or porechop]
@@ -28,51 +28,55 @@ The PIMA pipeline performs the following actions [Analysis program options in br
 9. Annotate antimicrobial resistance (AMR) genes
 10. Annotation of other user-supplied genomic features (from FASTA)
 11. Comparison to reference genome, including variant calling and annotation
-
+  
 Codebase stage: development   
-Developers and maintainers: Andrew Conley, Lavanya Rishishwar   
-Testers: Lavanya Rishishwar, Andrew Conley, Vasanta Chivukula, Nolan English
+Developers and maintainers, Testers: [Andrew Conley](https://github.com/abconley), [Lavanya Rishishwar](https://github.com/lavanyarishishwar), [Nolan English](https://github.com/Kyxsune), [Vasanta Chivukula](https://github.com/vchivukula7)
 
-PiMA pipeline requires Python 3.6 or higher version. If running the basecaller using GPU is advised.
+### Requirements
+
+* PiMA pipeline requires Python 3.6 or higher version. 
+* PiMA relies on GPU acceleration and parallezation for parts of its pipeline. Therefore a graphics card with a CUDA Compute Capability of >=6.0. [Handy Reference linking GPUs to Compatibility](https://developer.nvidia.com/cuda-gpus#compute)
 
 # Installation
-## Install using docker
-A docker image of this pipeline prebuilt with the dependencies is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline. This is the easiest way to load and run the pipeline.
-
-## Conda environments
-PiMA pipeline can also be installed using conda environment. This might give some issues as all the dependencies are not installed properly at times.
+## Method 1. Preferred - Install using docker
+A docker image of this pipeline prebuilt with the dependencies is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline. This is the easiest way to load and run the pipeline.  
+  
+All the configuration has been performed here for the user and it is a lot easier to setup then installing each dependency.
+  
+## Method 2. Using conda yml script
+PiMA pipeline can also be installed using conda environment. We have observed that conda doesn't always faithfully install the dependencies due to version conflicts of dependencies.  Please pay attention to any dependency that may be failing during the process.
 
 ```
 # Install the PIMA base environment (Python 3.6)
 conda env create -f pima.yml
 
 ```
-## Creating conda environment and loading the dependencies
-If you want to create your own conda environment and load all the dependencies then this is the way to install the pipeline.
+## Method 3. Creating conda environment and loading the dependencies
+If you want to setup your conda environment yourself and install all the dependencies, here is how you can do that:
 
 ```
 # You can also install the dependencies while creating the PiMA base environment.
-conda create -n pima medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools \
-bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
+conda install mamba
+conda create -n pima 
 
-# Some more dependencies (si_prefix, dna_features_viewer, and quast) installed using pip installer
-pip install si_prefix dna_features_viewer
-pip install git+https://github.com/ablab/quast
-```
-### Installing PiMA
-
-```
 # Activate the conda environement using
 conda activa pima
 
-# clone the PiMA pipeline using
+mamba install -c bioconda -c conda-forge medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools \
+bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
+
+# Some more dependencies (si_prefix, dna_features_viewer, and quast) installed using pip installer; conda version do not exactly work
+pip install si_prefix dna_features_viewer
+pip install git+https://github.com/ablab/quast
+
+# Once the dependencies have been installed, proceed to cloning PiMA
 git clone https://github.com/abconley/pima.git
 
 # If you want to download the reference file, kraken database, and other required folders, run
 pima.py --download
 
 ```
-## Quickstart guide
+## Quickstart Guide
 
 ### A typical run
 
@@ -95,11 +99,11 @@ pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --
 I prefer to run PiMA using the verbose flag and my hardware can support upto 20 threads. 
 Feel free to turn off the verbose flag if you so desire, and change the number of threads in accordance with your hardware 
 capability. This command will create the following outputs listed in no particular order:
-
-1. ont_assembly: Folder with the assembly metrics and the fasta file (assembly.fasta).
-2. ont_fastq: Folder with the raw_fastq file that is used to generate the assembly and the guppy run.
+  
+1. ont_assembly: Folder with the assembly FASTA file (assembly.fasta) and assembly metrics.
+2. ont_fastq: Folder with the raw FASTQ file that is used to generate the assembly and the guppy run.
 3. quast: Folder with the quality metrics and the quast report.
-4. downsample: folder with a fastq with a subset of a high-coverage data set to a given average coverage.
+4. downsample: folder with a FASTQ with a subset of a high-coverage data set to a given average coverage.
 5. medaka: folder with the consensus sequence (consensus.fasta).
 6. drawing: provides the contig plot.
 7. insertions: provides information on the alignment with the reference, alignment coordinates, any snps and report generated with this information.
@@ -127,8 +131,8 @@ pima.py command: pima.py --output <your output folder name> --ont-fast5 <where t
 ### Input file format
 
 The input file can be in fast5 format (use the --ont-fast5 flag for fast5 files) or fastq format (the flag would be --ont-fastq). 
-
-## All available arguments
+  
+## All Available Arguments
 The full description of each commandline option is provided below.
 
 ```
@@ -223,37 +227,34 @@ Other options:
   --bundle <PATH>                             Local Tectonic bundle (default : None)
   --fake-run                                  Don't actually run the pipeline, just pretend to (default : False)
 ```
-The --genome-size option where the genome size estimate for the assembly must be provided is recommended but not required.
 
-For error correcting purposes, if illumina reads are used along with ONT reads, this pipeline will map the illumina reads against the ONT assembly. It will then pass the resulting BAM file, and the ONT assembly into Pilon.  This will give us a new assembly with errors corrected.
+## Additional Notes on Optional Arguments
+* The --genome-size option where the genome size estimate for the assembly must be provided is recommended but not required.
+  
+* For error correcting purposes, if illumina reads are used along with ONT reads, this pipeline will map the illumina reads against the ONT assembly. It will then pass the resulting BAM file, and the ONT assembly into Pilon.  This will give us a new assembly with errors corrected.
 
 ## Literature Citations
-- McLaughlin HP, Bugrysheva JV, Conley AB, Gulvik CA, Kolton CB, Marston C, Swaney E, Lonsway DR, Cherney B, Gargis AS, Kongphet-Tran T, Lascols C, Michel P, Villanueva J, Hoffmaster ER, Gee JE, Sue D. 2020. When minutes matter: rapid nanopore whole genome sequencing for anthrax emergency preparedness. Emerging Infectious Diseases
-- [BCFtools and SAMtools](https://www.ncbi.nlm.nih.gov/pubmed/19505943)
-- [BEDTools](https://www.ncbi.nlm.nih.gov/pubmed/25199790)
-- [BLAST+](https://www.ncbi.nlm.nih.gov/pubmed/20003500)
-- [GNU parallel](https://www.usenix.org/publications/login/february-2011-volume-36-number-1/gnu-parallel-command-line-power-tool)
-- [Flye](https://www.ncbi.nlm.nih.gov/pubmed/30936562)
-- [miniasm and minimap2](https://www.ncbi.nlm.nih.gov/pubmed/27153593)
-- [MUMmer](https://www.ncbi.nlm.nih.gov/pubmed/14759262)
-- [racon](https://www.ncbi.nlm.nih.gov/pubmed/28100585)
-- [SPAdes](https://www.ncbi.nlm.nih.gov/pubmed/22506599)
-- [Wtdbg2](https://www.nature.com/articles/s41592-019-0669-3)
-
-### Software
-* BCFtools & Samtools: http://www.htslib.org/
-* bedtools: https://bedtools.readthedocs.io/en/latest/
-* NCBI BLAST+ (v 2.8+): https://blast.ncbi.nlm.nih.gov/Blast.cgi
+If you are using PIMA, please cite the following literature:
+McLaughlin HP, Bugrysheva JV, Conley AB, Gulvik CA, Kolton CB, Marston C, Swaney E, Lonsway DR, Cherney B, Gargis AS, Kongphet-Tran T, Lascols C, Michel P, Villanueva J, Hoffmaster ER, Gee JE, Sue D. 2020. When minutes matter: rapid nanopore whole genome sequencing for anthrax emergency preparedness. Emerging Infectious Diseases  
+  
+## Software Dependencies
+PIMA utilizes the following programs internally:
+* BCFtools & Samtools: http://www.htslib.org/ [Citation](https://www.ncbi.nlm.nih.gov/pubmed/19505943)
+* bedtools: https://bedtools.readthedocs.io/en/latest/ [Citation](https://www.ncbi.nlm.nih.gov/pubmed/25199790)
+* NCBI BLAST+ (v 2.8+): https://blast.ncbi.nlm.nih.gov/Blast.cgi [Citation](https://www.ncbi.nlm.nih.gov/pubmed/20003500)
 * bwa: https://github.com/lh3/bwa
-* flye: https://github.com/fenderglass/Flye
+* flye: https://github.com/fenderglass/Flye [Citation](https://www.ncbi.nlm.nih.gov/pubmed/30936562)
+* GNU Parallel: https://www.usenix.org/publications/login/february-2011-volume-36-number-1/gnu-parallel-command-line-power-tool
 * Medaka: https://github.com/nanoporetech/medaka
-* miniasm: https://github.com/lh3/miniasm
+* miniasm: https://github.com/lh3/miniasm [Citation](https://www.ncbi.nlm.nih.gov/pubmed/27153593)
 * minimap2: https://github.com/lh3/minimap2
+* MUMmer: https://mummer4.github.io/ [Citation](https://www.ncbi.nlm.nih.gov/pubmed/14759262)
 * nanopolish: https://github.com/jts/nanopolish
 * parallel: https://www.gnu.org/software/parallel/
 * Pilon: https://github.com/broadinstitute/pilon/wiki
 * Porechop: https://github.com/rrwick/Porechop
 * qcat: https://github.com/nanoporetech/qcat
+* racon: https://github.com/isovic/racon [Citation](https://www.ncbi.nlm.nih.gov/pubmed/28100585)
 * SAMtools: http://htslib.org/
-* SPAdes: http://cab.spbu.ru/software/spades/
-* wtdbg2: https://github.com/ruanjue/wtdbg2
+* SPAdes: http://cab.spbu.ru/software/spades/ [Citation](https://www.ncbi.nlm.nih.gov/pubmed/22506599)
+* wtdbg2: https://github.com/ruanjue/wtdbg2 [Citation](https://www.nature.com/articles/s41592-019-0669-3)
