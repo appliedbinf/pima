@@ -205,7 +205,7 @@ class PimaReport:
         
         with self.doc.create(Subsection(self.assembly_notes_title, numbering = False)) :
             left = FlushLeft()
-            for note in self.analysis.assembly_notes :
+            for _ , note in self.analysis.assembly_notes.iteritems():
                 left.append(note)
                 left.append(LineBreak())
                 self.doc.append(left)
