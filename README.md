@@ -102,7 +102,7 @@ Example: if the mutation_regions.bed file has 'chromosome' in the first column, 
 ```
 > chromosome NC.03921
 or
-> NC.053521 Chromosome
+> NC.053521 chromosome
 ```
 
 I prefer to run PiMA using the verbose flag and my hardware can support upto 20 threads. 
