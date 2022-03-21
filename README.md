@@ -96,7 +96,14 @@ pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --
 --verb 3 --reference-genome ref.fasta --mutation-regions mutation_regions.bed
 
 ```
-Please make sure that the first column in the mutation_regions.bed file (#contig) is the same as the header in the fasta file. Example: if the mutation_regions.bed file has 'chromosome' in the first column, then the fasta file header must include 'chromosome' in it.
+Please make sure that the first column in the mutation_regions.bed file (#contig) is the same as the header in the fasta file. 
+Example: if the mutation_regions.bed file has 'chromosome' in the first column, then the gene header must include 'chromosome'.
+
+```
+> chromosome NC.03921
+or
+> NC.053521 Chromosome
+```
 
 I prefer to run PiMA using the verbose flag and my hardware can support upto 20 threads. 
 Feel free to turn off the verbose flag if you so desire, and change the number of threads in accordance with your hardware 
