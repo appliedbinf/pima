@@ -97,7 +97,7 @@ pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --
 
 ```
 Please make sure that the first column in the mutation_regions.bed file (#contig) is the same as the header in the fasta file. 
-Example: if the mutation_regions.bed file has 'chromosome' in the first column, then the gene header must include 'chromosome'.
+Example: if the mutation_regions.bed file has 'chromosome' in the first column, then the contig header must include 'chromosome'.
 
 ```
 > chromosome NC.03921
