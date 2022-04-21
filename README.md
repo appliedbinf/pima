@@ -36,6 +36,7 @@ Developers and maintainers, Testers: [Andrew Conley](https://github.com/abconley
 
 * PiMA pipeline requires Python 3.6 or higher version. 
 * PiMA relies on GPU acceleration and parallezation for parts of its pipeline. Therefore a graphics card with a CUDA Compute Capability of >=6.0. [Handy Reference linking GPUs to Compatibility](https://developer.nvidia.com/cuda-gpus#compute)
+* Pilon version 1.24
 
 # Installation
 ## Method 1. (Preferred) Install using docker
