@@ -40,9 +40,9 @@ Developers and maintainers, Testers: [Andrew Conley](https://github.com/abconley
 
 # Installation
 ## Method 1. (Preferred) Install using docker
-A docker image of this pipeline prebuilt with the dependencies is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline. This is the easiest way to load and run the pipeline.  
+A docker image of this pipeline, prebuilt with the dependencies, is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline. This is the easiest way to load and run the pipeline.  
   
-All the configuration has been performed here for the user and it is a lot easier to setup then installing each dependency.
+All the configurations have been performed here for the user and is a lot easier to setup than installing each dependency.
   
 ## Method 2. Using conda yml script
 PiMA pipeline can also be installed using conda environment. We have observed that conda doesn't always faithfully install the dependencies due to version conflicts of dependencies.  Please pay attention to any dependency that may be failing during the process.
@@ -53,7 +53,7 @@ conda env create -f pima.yml
 
 ```
 ## Method 3. Creating conda environment and loading the dependencies
-If you want to setup your conda environment yourself and install all the dependencies, here is how you can do that:
+If you want to setup conda environment yourself and install all the dependencies, here are the steps:
 
 ```
 # You can also install the dependencies while creating the PiMA base environment.
