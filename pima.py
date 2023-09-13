@@ -1,38 +1,31 @@
 #!/usr/bin/env python
-
+from __future__ import annotations #enables "|" syntax for docstrings for python 3.7 - 3.9
 import copy
 import csv
 import datetime
 import glob
-import locale
-import logging
 import os
 import re
 import shutil
-import statistics
+import statistics 
 import subprocess
 import sys
 import time
 from argparse import ArgumentParser, HelpFormatter
-
-import numpy
+from collections import OrderedDict
 import pandas as pd
 import numpy as np
-import joblib
-
 import Bio.SeqIO
-import pathos.multiprocessing as mp
-
 from dna_features_viewer import GraphicFeature, GraphicRecord
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
-from ba_report import PimaReport
+#local imports have period in front for conda build (.src.MarkdownReport) / delete period for running with debugger
+from .src.MarkdownReport import PimaReport
+from .src.building_pycircos_figures import BuildCircosPlots
 
 pd.set_option('display.max_colwidth', 200)
-
-VERSION=1.0
 
 pima_path = os.path.dirname(os.path.realpath(__file__))
 data_dir = os.path.join(pima_path, 'data')
@@ -46,7 +39,10 @@ included_databases = [amr_database_default, inc_database_default]
 plasmid_database_default_fasta = os.path.join(pima_path, 'data/plasmids_and_vectors.fasta')
 kraken_database_default = os.path.join(pima_path, 'data/kraken2')
 reference_dir_default = os.path.join(pima_path, 'data/reference_sequences')
+pima_css = os.path.join(pima_path,'data/pima.css')
 
+with open(os.path.join(pima_path,"VERSION"), "r") as version_fp:
+    VERSION=version_fp.read().strip()
 
 class Colors:
     HEADER = '\033[95m'
@@ -107,7 +103,6 @@ def format_kmg(number, decimals = 0) :
             magnitude_unit = magnitude_units[i]
             return(('{:0.' + str(decimals) + 'f}').format(number / magnitude_power) + magnitude_unit)
 
-    
 class Analysis :
 
     def __init__(self, opts = None, unknown_args = None) :
@@ -181,7 +176,8 @@ class Analysis :
         # Output options
         self.output_dir = None
         self.overwrite = False
-        
+        self.resume = False
+
         # Assembly options
         self.assembler = 'flye'
         self.genome_assembly_size = None
@@ -300,6 +296,7 @@ class Analysis :
         # Output options
         self.output_dir = opts.output
         self.overwrite = opts.overwrite
+        self.resume = opts.resume
 
         # Assembly options
         self.assembler = opts.assembler
@@ -485,7 +482,32 @@ class Analysis :
 
         finish_file = os.path.join(a_dir, '.finish')
         self.touch_file(finish_file)
-    
+
+    def make_report_info_file(self, a_dir) :
+        report_info_file = os.path.join(a_dir, '.report_info')
+        self.touch_file(report_info_file)
+        return report_info_file
+
+    def find_checkpoint(self, a_dir) :
+        """Searches for the .finish file generated after each analysis step is completed
+
+        Args:
+            a_dir (path): Path to analysis directory
+
+        Returns:
+            True if 'resume' flag provided & ".finish" found
+            False if ".finish" is not found, existing directory deleted
+        """
+        if not self.resume:
+            return False
+
+        if os.path.exists(os.path.join(a_dir, ".finish")) :
+            return True
+        
+        else:
+            if os.path.exists(a_dir) :
+                shutil.rmtree(a_dir)
+            return False
         
     def load_fasta(self, fasta) :
 
@@ -515,15 +537,22 @@ class Analysis :
 
         self.print_and_log('Downloading missing databases', self.main_process_verbosity, self.main_process_color)
 
+        DockerPathPlasmid = os.path.join('/home/DockerDir/Data/Temp_Data/plasmids_and_vectors.fasta')
+        DockerPathKraken = os.path.join('/home/DockerDir/Data/Temp_Data/kraken2')
+
         database_fasta = plasmid_database_default_fasta
-        if not self.validate_file_and_size(database_fasta) :
+        if not self.validate_file_and_size(database_fasta) and self.validate_file_and_size(DockerPathPlasmid):
+            self.plasmid_database = DockerPathPlasmid
+        elif not self.validate_file_and_size(database_fasta) and not self.validate_file_and_size(DockerPathPlasmid):
             self.print_and_log('Downloading plasmid database', self.sub_process_verbosity, self.sub_process_color)
             command = ' '.join(['wget',
                                 '-O', database_fasta,
                                 'http://pima.appliedbinf.com/data/plasmids_and_vectors.fasta'])
             self.print_and_run(command)
 
-        if not os.path.isdir(kraken_database_default) :
+        if not os.path.isdir(kraken_database_default) and self.validate_file_and_size(DockerPathKraken):
+            self.kraken_database = DockerPathKraken
+        elif not os.path.isdir(kraken_database_default) and not self.validate_file_and_size(DockerPathKraken):
             self.print_and_log('Downloading and building kraken2 database (may take some time)', self.sub_process_verbosity, self.sub_process_color)
             kraken_stdout, kraken_stderr = self.std_files(kraken_database_default)
             command = ' '.join(['kraken2-build',
@@ -631,6 +660,7 @@ class Analysis :
                             genome,
                             ' '.join(fastq),
                             '2>' + minimap_stderr,
+                            '| samtools view -h -F 0x0100 -q 30', #removes secondary alignments and low quality alignments
                             '| samtools sort',
                             '-@', str(self.threads),
                             '-o', bam,
@@ -801,11 +831,12 @@ class Analysis :
     def validate_output_dir(self) :
 
         self.print_and_log('Validating output dir', self.main_process_verbosity, self.main_process_color)
-        
         if not self.output_dir :
             self.errors += ['No output directory given (--output)']
-        elif os.path.exists(self.output_dir) and not self.overwrite :
-            self.errors += ['Output directory ' + self.output_dir + ' already exists.  Add --overwrite to ignore']
+        elif self.overwrite and self.resume:
+            self.errors += ['--overwrite and --resume are mutually exclusive']
+        elif os.path.exists(self.output_dir) and not (self.overwrite or self.resume):
+            self.errors += ['Output directory ' + self.output_dir + ' already exists.  Add --overwrite OR --resume to ignore']
 
         self.analysis = ['make_output_dir'] + self.analysis
 
@@ -1212,7 +1243,6 @@ class Analysis :
     @unless_only_basecall
     @unless_only_assemble
     def validate_reference_fasta(self) : 
-
         if not self.reference_fasta :
             return
 
@@ -1220,10 +1250,11 @@ class Analysis :
 
         if not self.validate_file_and_size(self.reference_fasta, min_size = 1000) :
             self.errors += ['Reference FASTA ' + self.reference_fasta + ' can\'t be found or is size 0.']
+            self.will_have_reference_fasta = False #prevents nonsensical error when checking if the mutation regions are present in a nonexistant file
+
         else :
             self.load_reference()
-            
-        self.will_have_reference_fasta = True
+            self.will_have_reference_fasta = True
 
         
     @unless_only_basecall
@@ -1275,7 +1306,7 @@ class Analysis :
                 self.versions['dnadiff'] = re.search('[0-9]+\\.[0-9.]*', self.print_and_run(command)[1]).group(0)
 
             self.analysis = self.analysis + ['call_insertions', 'quast_genome', 'draw_circos']
-            
+
         
     @unless_only_basecall
     @unless_only_assemble
@@ -1318,10 +1349,10 @@ class Analysis :
                                                   'not found in reference genome.'])]
                         continue
 
-                    if not isinstance(mutation_region[1], numpy.int64) :
+                    if not isinstance(mutation_region[1], np.int64) :
                         self.errors += ['Non-integer found in mutation region start (column 2): ' + mutation_region[1]]
                         break
-                    elif not isinstance(mutation_region[2], numpy.int64) :
+                    elif not isinstance(mutation_region[2], np.int64) :
                         self.errors += ['Non-integer found in mutation region start (column 3): ' + mutation_region[2]]
                         break
 
@@ -1420,12 +1451,23 @@ class Analysis :
         
         if self.bundle :
             if not os.path.isdir(self.bundle) :
-                self.errors += ['Can\'t find Tectonic bundle ' + self.bundle]
+                self.errors += ['Can\'t find pandoc bundle ' + self.bundle]
         
-        self.validate_utility('tectonic', 'tectonic is not on the PATH (required for reporting).')
+        self.validate_utility('pandoc', 'pandoc is not on the PATH (required for reporting).')
         
         self.analysis += ['make_report']
-        
+  
+    def validate_analysis_run_order(self) : 
+        ## Always Draw Circos plots & Make report at the End
+        ### Allows for additional data to be built into the CIRCOS that uses every previous step regardless of pipeline orientation
+        last_steps = OrderedDict({'draw_circos': None, 'make_report': None})
+        for step in last_steps:
+            try: 
+                last_steps[step] = self.analysis.index(step)
+                del self.analysis[last_steps[step]]
+                self.analysis.append(step)
+            except ValueError:
+                pass
 
     def validate_download(self) :
 
@@ -1492,7 +1534,8 @@ class Analysis :
         self.validate_plasmids()
         self.validate_draw_features()
         self.validate_make_report()
-        
+        self.validate_analysis_run_order()
+
         if self.analysis == ['make_output_dir'] :
             if self.is_barcode :
                 return
@@ -1515,18 +1558,19 @@ class Analysis :
         
     def make_output_dir(self) :
 
-        if os.path.isdir(self.output_dir) :
-            shutil.rmtree(self.output_dir)
-        elif os.path.isfile(self.output_dir) :
-            os.remove(self.output_dir)
+        if not self.resume:
+            if os.path.isdir(self.output_dir) :
+                shutil.rmtree(self.output_dir)
+            elif os.path.isfile(self.output_dir) :
+                os.remove(self.output_dir)
 
-        os.mkdir(self.output_dir)
+            os.mkdir(self.output_dir)
 
-        # TODO - move this to it's own function?
-        self.analysis_steps_txt = os.path.join(self.output_dir, 'analysis.txt')
-        analysis_steps_handle = open(self.analysis_steps_txt, 'w')
-        analysis_steps_handle.write('\n'.join(self.analysis))
-        analysis_steps_handle.close()
+            # TODO - move this to it's own function?
+            self.analysis_steps_txt = os.path.join(self.output_dir, 'analysis.txt')
+            analysis_steps_handle = open(self.analysis_steps_txt, 'w')
+            analysis_steps_handle.write('\n'.join(self.analysis))
+            analysis_steps_handle.close()
         
         
     def start_logging(self):
@@ -1821,7 +1865,7 @@ class Analysis :
              pass_dir = guppy_dir
         else :
              pass_dir = os.path.join(guppy_dir, 'pass')
-       	command = ' '.join(['cat', pass_dir + '/*.fastq >', ont_raw_fastq])
+        command = ' '.join(['cat', pass_dir + '/*.fastq >', ont_raw_fastq])
         self.print_and_run(command)
 
         # Make sure the merged FASTQ file exists and has size > 0
@@ -1940,7 +1984,8 @@ class Analysis :
         if self.ont_n50 <= self.ont_n50_min :
             warning = 'ONT N50 (' + str(self.ont_n50) + ') is less than the recommended minimum (' + str(self.ont_n50_min) + ').'
             self.add_warning(warning)
-            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+            self.assembly_notes = pd.concat([self.assembly_notes, pd.Series(warning, dtype='object')])
+            #self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
             
         # See if we sould downsample the ONT FASTQ file
         if not self.genome_assembly_raw_size is None :
@@ -1985,6 +2030,11 @@ class Analysis :
                            self.sub_process_verbosity, self.sub_process_color)
 
         self.downsample_dir = os.path.join(self.output_dir, 'downsample')
+        if self.find_checkpoint(self.downsample_dir):
+            downsampled_fastq = os.path.join(self.downsample_dir, 'downsampled.fastq')
+            self.ont_fastq = downsampled_fastq
+            return
+        
         os.makedirs(self.downsample_dir)
         self.make_start_file(self.downsample_dir)
         
@@ -2037,6 +2087,13 @@ class Analysis :
         self.print_and_log('Running Kraken2 to check for contamination', self.main_process_verbosity, self.main_process_color)
 
         self.kraken_dir = os.path.join(self.output_dir, 'contamination')
+
+        #TODO: Will NOT resume correctly and will break the run
+        """
+        if self.find_checkpoint(self.kraken_dir):
+            self.did_kraken_fastq = True
+            return
+        """
         os.makedirs(self.kraken_dir)
         self.make_start_file(self.kraken_dir)
 
@@ -2061,6 +2118,11 @@ class Analysis :
         kraken_files = [os.path.join(fastq_dir, 'kraken.' + i) for i in ['report', 'out', 'class', 'unclass']]        
         kraken_report, kraken_out, kraken_class, kraken_unclass = kraken_files
         kraken_stdout, kraken_stderr = self.std_files(os.path.join(fastq_dir, 'kraken'))
+        DockerPathKraken = os.path.join('/home/DockerDir/Data/Temp_Data/kraken2')
+
+        if not os.path.isdir(self.kraken_database) and os.path.isdir(DockerPathKraken):
+            'print Using Docker'
+            self.kraken_database = DockerPathKraken
 
         fastq_arg = fastq
         if isinstance(fastq, list) :
@@ -2100,6 +2162,12 @@ class Analysis :
 
         # Make the directory for new assembly files
         self.ont_assembly_dir = os.path.join(self.output_dir, 'ont_assembly')
+        
+        if self.find_checkpoint(self.ont_assembly_dir):
+            wtdbg2_prefix = os.path.join(self.ont_assembly_dir, 'assembly')
+            self.genome_fasta = wtdbg2_prefix + '.fasta'
+            return
+    
         os.makedirs(self.ont_assembly_dir)
         self.make_start_file(self.ont_assembly_dir)
 
@@ -2141,6 +2209,11 @@ class Analysis :
 
         # Make the directory for new assembly files
         self.ont_assembly_dir = os.path.join(self.output_dir, 'ont_assembly')
+        if self.find_checkpoint(self.ont_assembly_dir):
+            self.genome_fasta = self.ont_assembly_dir + '/assembly.fasta'
+            self.did_flye_ont_fastq = True
+            return
+        
         os.makedirs(self.ont_assembly_dir)
         self.make_start_file(self.ont_assembly_dir)
         
@@ -2156,7 +2229,6 @@ class Analysis :
 
         # Actually run Flye
         command = ' '.join(['flye',
-                            '--plasmid',
                             raw_or_corrected, self.ont_fastq,
                             '--meta',
                             '--keep-haplotypes',
@@ -2183,7 +2255,8 @@ class Analysis :
             warning = 'Flye reported {:d} open contigs ({:s}); assembly may be incomplete.'.\
                 format(open_contigs.shape[0], ', '.join(open_contig_ids))
             self.add_warning(warning)
-            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+            self.assembly_notes = pd.concat([self.assembly_notes, pd.Series(warning, dtype='object')])
+            #self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
         
         self.make_finish_file(self.ont_assembly_dir)
 
@@ -2195,6 +2268,11 @@ class Analysis :
         self.print_and_log('Running Racon on assembly', self.main_process_verbosity, self.main_process_color)
         
         self.racon_dir = os.path.join(self.output_dir, 'racon')
+        if self.find_checkpoint(self.racon_dir):
+            self.genome_fasta = os.path.join(self.racon_dir, 'assembly.fasta')
+            return
+
+
         os.makedirs(self.racon_dir)
         self.make_start_file(self.racon_dir)
         
@@ -2254,6 +2332,11 @@ class Analysis :
         self.print_and_log('Running Medaka on ONT assembly', self.main_process_verbosity, self.main_process_color)
 
         self.medaka_dir = os.path.join(self.output_dir, 'medaka')
+        if self.find_checkpoint(self.medaka_dir):
+            self.genome_fasta = os.path.join(self.medaka_dir, 'assembly.fasta')
+            self.did_medaka_ont_assembly = True
+            return
+        
         os.makedirs(self.medaka_dir)
         self.make_start_file(self.medaka_dir)
 
@@ -2270,7 +2353,8 @@ class Analysis :
                             '-i', self.ont_fastq,
                             '-d', self.genome_fasta,
                             '-o', self.medaka_dir,
-                            '-t', str(self.threads),
+                            '-t 2', #Medaka throttles anything more than 2 due to poor scaling
+                            '-b 50', #MUCH more efficient on scicomp than the default [-b 100] (10x faster, 1/10th the RAM) 
                             '1>' + medaka_stdout, '2>' + medaka_stderr])
         self.print_and_run(command)
         self.validate_file_and_size_or_error(self.medaka_fasta, 'Medaka FASTA', 'cannot be found after Medaka', 'is empty')
@@ -2300,6 +2384,12 @@ class Analysis :
         
         # Figure out where the assembly is going
         self.spades_dir = os.path.join(self.output_dir, 'spades')
+        if self.find_checkpoint(self.spades_dir):
+            assembly_fasta = os.path.join(self.spades_dir, 'assembly.fasta')
+            self.genome_fasta = assembly_fasta
+            self.load_genome()
+            return
+        
         os.makedirs(self.spades_dir)
         self.make_start_file(self.spades_dir)
         
@@ -2353,15 +2443,36 @@ class Analysis :
     def pilon_assembly(self) :
 
         self.print_and_log('Running Pilon on genome assembly', self.main_process_verbosity, self.main_process_color)
-        
         self.pilon_dir = os.path.join(self.output_dir, 'pilon')
+
+        ## Check if pilon has been run before to completion
+        if self.find_checkpoint(self.pilon_dir):
+            self.genome_fasta = os.path.join(self.pilon_dir, 'assembly.fasta')
+            self.load_genome()
+
+            #reporting info - scraped from file .report_info
+            with open(os.path.join(self.pilon_dir, '.report_info'), 'r') as fin:
+                for line in fin:
+                    info_type, message = line.split(";")
+                    if info_type == 'files_to_clean':
+                        self.files_to_clean += [message]
+                    elif info_type == 'method':
+                        self.report[self.methods_title][self.assembly_methods] = \
+                            pd.concat([self.report[self.methods_title][self.assembly_methods], pd.Series(message, dtype='object')])
+            self.print_and_log('Pilon had previously been run and finished successfully', self.main_process_verbosity, self.main_process_color)
+            self.did_pilon_ont_assembly = True
+            return
+
         os.makedirs(self.pilon_dir)
         self.make_start_file(self.pilon_dir)
+        report_info_path = self.make_report_info_file(self.pilon_dir)
+        report_info = open(report_info_path, 'w')
 
         # Map illumina reads onto the assembly
         self.print_and_log('Mapping Illumina reads to assembly', self.sub_process_verbosity, self.sub_process_color)
         pilon_bam = os.path.join(self.pilon_dir, 'mapping.bam')
         self.files_to_clean += [pilon_bam]
+        print("files_to_clean", pilon_bam, file = report_info, sep = ";")
 
         # See what mapping method to use - bwa aln or minimap 2
         if self.illumina_read_length_mean <= 50 :
@@ -2371,8 +2482,10 @@ class Analysis :
             self.minimap_illumina_fastq(self.genome_fasta, self.illumina_fastq, pilon_bam)
             method = 'Illumina reads were mapped to the genome assembly using minimap2 (v ' + \
                 str(self.versions['minimap2']) + ').'
+            
         self.report[self.methods_title][self.assembly_methods] = \
-            self.report[self.methods_title][self.assembly_methods].append(pd.Series(method))
+            pd.concat([self.report[self.methods_title][self.assembly_methods], pd.Series(method, dtype='object')])
+        print("method", method, file = report_info, sep = ";")
 
         # Figure out the depth here.  If it's too low, give some sort of warning?
         coverage_tsv = os.path.join(self.pilon_dir, 'coverage.tsv')
@@ -2388,8 +2501,9 @@ class Analysis :
             warning = 'Illumina coverage for Pilon ({:.0f}X) is below the recommended minimum ({:.0f}X).'.\
                 format(self.pilon_coverage, self.pilon_coverage_min)
             self.add_warning(warning)
-            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
-
+            self.assembly_notes = pd.concat([self.assembly_notes, pd.Series(warning, dtype = 'object')])
+            print("method", warning, file = report_info, sep=";")
+            
         # Actually run pilon
         self.print_and_log('Running Pilon', self.sub_process_verbosity, self.sub_process_color)
         pilon_stdout, pilon_stderr = self.std_files(os.path.join(self.pilon_dir, 'pilon'))
@@ -2421,10 +2535,11 @@ class Analysis :
         method = 'The Illumina mappings were then used to error-correct the assembmly with Pilon (v ' + \
             str(self.versions['pilon']) + ').'
         self.report[self.methods_title][self.assembly_methods] = \
-            self.report[self.methods_title][self.assembly_methods].append(pd.Series(method))
-
+            pd.concat([self.report[self.methods_title][self.assembly_methods], pd.Series(method, dtype='object')])
+        print("method", method, file = report_info, sep = ";")
         self.make_finish_file(self.pilon_dir)
-
+        report_info.close()
+        self.did_pilon_ont_assembly = True
 
     def evaluate_assembly(self) :
 
@@ -2443,21 +2558,25 @@ class Analysis :
             warning = 'Assembly produced {:d} contigs, more than ususally expected; assembly may be fragmented'.\
                 format(assembly_info.shape[0])
             self.add_warning(warning)
-            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+            self.assembly_notes = pd.concat([self.assembly_notes, pd.Series(warning, dtype='object')])
+            "self.assembly_notes = self.assembly_notes.append(pd.Series(warning))"
         small_contigs = assembly_info.loc[assembly_info['length'] <= 3000, :]
 
         if small_contigs.shape[0] > 0 :
             warning = 'Assembly produced {:d} small contigs ({:s}); assembly may include spurious sequences.'.\
                 format(small_contigs.shape[0], ', '.join(small_contigs['contig']))
             self.add_warning(warning)
-            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
-        
+            self.assembly_notes = pd.concat([self.assembly_notes, pd.Series(warning, dtype='object')])
+            "self.assembly_notes = self.assembly_notes.append(pd.Series(warning))"
     
     def assembly_info(self) :
 
         self.print_and_log('Getting assembly description/coverage', self.main_process_verbosity, self.main_process_color)
         
         self.info_dir = os.path.join(self.output_dir, 'info')
+        if self.find_checkpoint(self.info_dir):
+            return
+        
         os.makedirs(self.info_dir)
         self.make_start_file(self.info_dir)
 
@@ -2498,7 +2617,9 @@ class Analysis :
             warning = read_type + ' mean coverage ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.\
                 format(mean_coverage, self.ont_coverage_min)
             self.add_warning(warning)
-            self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+            # append -> concat
+            self.assembly_notes = pd.concat([self.assembly_notes, pd.Series(warning, dtype='object')])
+            #self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
 
         # If some contigs have low coverage, report that
         # TODO make this use ONT/Illumina specific coverage
@@ -2508,7 +2629,8 @@ class Analysis :
                 warning = read_type + ' coverage of {:s} ({:.0f}X) is less than the recommended minimum ({:.0f}X).'.\
                     format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], self.ont_coverage_min)
                 self.add_warning(warning)
-                self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+                self.assembly_notes = pd.concat([self.assembly_notes, pd.Series(warning, dtype='object')])
+                #self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
                 
         # See if some contigs have anolously low coverage
         fold_coverage = self.contig_info[read_type]['coverage'] / mean_coverage
@@ -2518,7 +2640,8 @@ class Analysis :
                 warning = read_type + ' coverage of {:s} ({:.0f}X) is less than 1/5 the mean coverage ({:.0f}X).'.\
                     format(low_coverage.iloc[contig_i, 0], low_coverage.iloc[contig_i, 2], mean_coverage)
                 self.add_warning(warning)
-                self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
+                self.assembly_notes = pd.concat([self.assembly_notes, pd.Series(warning, dtype='object')])
+                #self.assembly_notes = self.assembly_notes.append(pd.Series(warning))
         
         
     def make_blast_database(self, database_fasta) :
@@ -2537,9 +2660,27 @@ class Analysis :
 
         # Keep track of feature hits for reporting
         self.features_dir = os.path.join(self.output_dir, 'features')
+
+        #TODO: This does not work! 
+
+        if self.find_checkpoint(self.features_dir):
+            self.did_blast_feature_sets = True
+            """
+            with open(os.path.join(self.features_dir, '.report_info'),'r') as fin:
+                for line in fin:
+                    info, data = line.split(";")
+                    if info == 'feature_dirs':
+                        self.feature_dirs = [elem for elem in data.split(",")]
+                    elif info == 'feature_names':
+                        self.feature_names = [elem for elem in data.split(",")]
+            """
+            return
+    
         os.makedirs(self.features_dir)
         self.make_start_file(self.features_dir)
-        
+        report_info_path = self.make_report_info_file(self.features_dir)
+        report_info = open(report_info_path, 'w')
+
         # Make a blast database of the genome
         self.make_blast_database(self.genome_fasta)
         
@@ -2551,10 +2692,15 @@ class Analysis :
             self.feature_dirs += [feature_dir]
             self.feature_names += [feature_name]
 
+        ## Save info for --resume
+        if len(self.feature_dirs) > 0:
+            print("feature_dirs", ','.join(self.feature_dirs), file = report_info, sep=";")
+            print("feature_names", ','.join(self.feature_names), file=report_info, sep=";")
+
         self.did_blast_feature_sets = True
-            
+        report_info.close()
+
         self.make_finish_file(self.features_dir)
-        
             
     def blast_features(self, feature_fasta, feature_dir, feature_name) :
         
@@ -2614,6 +2760,14 @@ class Analysis :
             
         self.feature_hits[feature_name] = best
 
+        if self.resume:
+            best_bed = os.path.join(feature_dir, 'best.bed')
+            # Keep the feature hits for later drawing.  It may be empty, i.e., no feature hits
+            try :
+                best = pd.read_csv(filepath_or_buffer = best_bed, sep = '\t', header = None)
+            except :
+                best = pd.DataFrame()
+            self.feature_hits[feature_name] = best
 
     def call_insertions(self) :
 
@@ -2621,6 +2775,12 @@ class Analysis :
         
         # Make the directory for new assembly files
         self.insertions_dir = os.path.join(self.output_dir, 'insertions')
+
+        #TODO: Revisit this to enable checkpointing
+        
+        if self.find_checkpoint(self.insertions_dir):
+            return
+        
         os.makedirs(self.insertions_dir)
         self.make_start_file(self.insertions_dir)
 
@@ -2649,13 +2809,15 @@ class Analysis :
             warning = 'Identity with the reference ({:.2f}%) is less than {:.2f}%'.\
                 format(self.reference_identity, self.reference_identity_min)
             self.add_warning(warning)
-            self.alignment_notes = self.alignment_notes.append(pd.Series(warning))
+            self.alignment_notes = pd.concat([self.alignment_notes, pd.Series(warning, dtype='object')])
+            #self.alignment_notes = self.alignment_notes.append(pd.Series(warning))
         
         if self.reference_aligned_fraction <= self.reference_alignment_min :
             warning = 'Fraction of the reference alignment ({:.2f}%) is less than {:.2f}%'.\
                 format(self.reference_aligned_fraction, self.reference_alignment_min)
             self.add_warning(warning)
-            self.alignment_notes = self.alignment_notes.append(pd.Series(warning))
+            self.alignment_notes = pd.concat([self.alignment_notes, pd.Series(warning, dtype='object')])
+            #self.alignment_notes = self.alignment_notes.append(pd.Series(warning))
 
         # Pull out the aligned regions of the two genomes
         self.print_and_log('Finding reference and query specific insertions', self.sub_process_verbosity, self.sub_process_color)
@@ -2749,15 +2911,29 @@ class Analysis :
         
     def quast_genome(self) :
 
+        def parse_quast_output():
+            # Look at the quast TSV file
+            quast_report_tsv = os.path.join(self.quast_dir, 'report.tsv')
+            quast_report = pd.read_csv(quast_report_tsv, header = 0, index_col = 0, sep = '\t')
+            
+            self.quast_mismatches = int(float(quast_report.loc['# mismatches per 100 kbp', :][0]) * \
+                                        (float(quast_report.loc['Total length (>= 0 bp)', :][0]) / 100000.))
+            self.quast_indels = int(float(quast_report.loc['# indels per 100 kbp', :][0]) * \
+                                    (float(quast_report.loc['Total length (>= 0 bp)', :][0]) / 100000.))
+        
         self.print_and_log('Running Quast of the genome vs. the reference sequence', \
                            self.main_process_verbosity, self.main_process_color) 
 
-        # Quast output directory
         self.quast_dir = os.path.join(self.output_dir, 'quast')
+        if self.find_checkpoint(self.quast_dir):
+            parse_quast_output()
+            return
+
+        # Quast output directory
         os.makedirs(self.quast_dir)
         self.make_start_file(self.quast_dir)
         
-        # Run Qusat
+        # Run Quast
         quast_stdout, quast_stderr = self.std_files(os.path.join(self.quast_dir, 'quast'))
         command = ' '.join(['quast.py',
                             '-R', self.reference_fasta,
@@ -2766,149 +2942,69 @@ class Analysis :
                             '1>' + quast_stdout, '2>' + quast_stderr])
         self.print_and_run(command)
 
-        # Look at the quast TSV file
-        quast_report_tsv = os.path.join(self.quast_dir, 'report.tsv')
-        quast_report = pd.read_csv(quast_report_tsv, header = 0, index_col = 0, sep = '\t')
-        
-        self.quast_mismatches = int(float(quast_report.loc['# mismatches per 100 kbp', :][0]) * \
-                                    (float(quast_report.loc['Total length (>= 0 bp)', :][0]) / 100000.))
-        self.quast_indels = int(float(quast_report.loc['# indels per 100 kbp', :][0]) * \
-                                (float(quast_report.loc['Total length (>= 0 bp)', :][0]) / 100000.))
+        # Collect results (refactored as function to enable checkpointing)
+        parse_quast_output()
 
         self.make_finish_file(self.quast_dir)
-
-        
-    def draw_circos(self) :
-
-        self.print_and_log('Drawing Circos plot of assembly v. reference alignment', \
-                           self.main_process_verbosity, self.main_process_color) 
-
-        # Make the directory for drawings
-        self.circos_dir = os.path.join(self.output_dir, 'circos')
-        os.makedirs(self.circos_dir)
-        self.make_start_file(self.circos_dir)
-        
-        reference_contigs = self.reference.index.tolist()
-
-        # Draw one circos plot for each of the contigs in the reference sequence
-        for contig in reference_contigs :
-
-            self.print_and_log('Drawing Circos plot for ' + contig, self.sub_process_verbosity, self.sub_process_color)
-
-            contig_dir = os.path.join(self.circos_dir, contig)
-            os.makedirs(contig_dir)
-
-            contig_size = len(self.reference[contig].seq)
-            
-            # Pull the aligned regions out of the dnadiff 1coords output
-            contig_alignment_txt = os.path.join(contig_dir, 'alignment.txt')
-            command = ' '.join(['cat', self.one_coords,
-                                '| awk \'$12 == "' + contig + '"\'',
-                                '| awk \'{OFS = "\t";print $(NF - 1),$1,$2}\'',
-                                '| bedtools complement -g', self.reference_sizes, '-i -',
-                                '| awk \'$3 - $2 >= 25\'',
-                                '| bedtools complement -g', self.reference_sizes, '-i -',
-                                '| awk \'{OFS = "\t";print $1,$2,$3}\'',
-                                '| awk \'$1 == "' + contig + '"\'',
-                                '>', contig_alignment_txt])
-            self.print_and_run(command)
-
-            # Pull the gap regions out of the dnadiff 1coords output
-            contig_gap_txt = os.path.join(contig_dir, 'gap.txt')
-            command = ' '.join(['cat', self.one_coords,
-                                '| awk \'$12 == "' + contig + '"\'',
-                                '| awk \'{OFS = "\t";print $(NF - 1),$1,$2}\'',
-                                '| bedtools complement -g', self.reference_sizes, '-i -',
-                                '| awk \'$3 - $2 >= 25\'',
-                                '| awk \'{OFS = "\t";print $1,$2,$3}\'',
-                                '| awk \'$1 == "' + contig + '"\'',
-                                '>', contig_gap_txt])
-            self.print_and_run(command)
-            
-            contig_karyotype_txt = os.path.join(contig_dir, 'karyotype.txt')
-            command = ' '.join(['faidx -i chromsizes', self.reference_fasta,
-                                '| awk \'$1 == "' + contig + '"\'',
-                                '| awk \'{OFS = "\t";print "chr\t-",$1,$1,0,$2,"plasmid_grey"}\''
-                                '>', contig_karyotype_txt])
-            self.print_and_run(command)
-
-            # Figure out the tick labels to use and where to place them
-            # We don't actually want the last tick cause this thing is circular
-            tick_at = pretty(1, len(self.reference[contig].seq), 12).astype(int)[:-1]
-            
-            tick_major = tick_at[1] - tick_at[0]
-            tick_minor = tick_major / 5
-            tick_base_conf = os.path.join(data_dir, 'tick_base.conf')
-            tick_conf = os.path.join(contig_dir, 'tick.conf')
-
-            command = ' '.join(['cat', tick_base_conf,
-                                '| awk \'{sub("TICK_MAJOR", "' + str(tick_major) + '", $0);',
-                                'sub("TICK_MINOR", "' + str(tick_minor) + '", $0);print}\'',
-                                '>', tick_conf])
-            self.print_and_run(command)
-
-            tick_labels = [format_kmg(i) for i in tick_at]
-            
-            tick_data = pd.DataFrame()
-            for i in range(len(tick_labels)) :
-                tick_data = pd.concat([tick_data, pd.Series([contig, tick_at[i], tick_at[i], tick_labels[i]])], axis = 1)
-            tick_data = tick_data.transpose()
-            
-            tick_txt = os.path.join(contig_dir, 'tick.txt')
-            tick_data.to_csv(path_or_buf = tick_txt, sep = '\t', header = False, index = False)
-                                         
-            circos_conf = os.path.join(data_dir, 'circos.conf')
-            circos_stdout, circos_stderr = self.std_files('circos')
-            command = ' '.join(['(cd', contig_dir,
-                                '&& circos --conf', circos_conf,
-                                '1>' + circos_stdout, '2>' + circos_stderr, ')'])
-            self.print_and_run(command)
-
-            # Keep track of images for the report
-            circos_png = os.path.join(contig_dir, 'circos.png')
-            self.contig_alignment[contig] = circos_png
-
-        self.make_finish_file(self.circos_dir)
-            
-                                         
+                                          
     def call_amr_mutations(self) :
+        ##TODO: Convert this set of functions into medaka for ONT and freebayes for Illumina
+        ## Use same parameters we used for the passage strain experiment
         
         self.print_and_log('Calling AMR mutations', self.main_process_verbosity, self.main_process_color)
 
         # Make the directory for small mutation related work
         self.mutations_dir = os.path.join(self.output_dir, 'mutations')
+        #TODO: Enable checkpointing
+        
+        if self.find_checkpoint(self.mutations_dir):
+            return
+        
         os.makedirs(self.mutations_dir)
         self.make_start_file(self.mutations_dir)
 
         # Map the reads to the reference sequence
-        self.reference_mapping_bam = os.path.join(self.mutations_dir, 'reference_mapping.bam')
+        ## Do we want to map both ONT & Illumina when they are provided - allows later drawing of coverage profiles
+        #self.reference_mapping_ont_bam = os.path.join(self.mutations_dir, 'reference_mapping.bam')
         if self.illumina_fastq :
-            self.minimap_illumina_fastq(self.reference_fasta, self.illumina_fastq, self.reference_mapping_bam)
+            self.reference_mapping_illumina_bam = os.path.join(self.mutations_dir, 'reference_mapping_illumina.bam')
+            self.minimap_illumina_fastq(self.reference_fasta, self.illumina_fastq, self.reference_mapping_illumina_bam)
             kind_of_reads = 'Illumina'
-        else :
-            self.minimap_ont_fastq(self.reference_fasta, self.ont_fastq, self.reference_mapping_bam)
-            kind_of_reads = 'ONT'
         
+            # Make an mpileup file out of the reads
+            reference_mapping_mpileup = os.path.join(self.mutations_dir, 'reference_mapping_illumina.mpileup')
+            self.mpileup_bam(self.reference_mapping_illumina_bam, reference_mapping_mpileup, self.mutations_dir)
+        else : #We'll generate the ONT mapping information during the circos step to build the coverage, but not to call mutations
+            self.reference_mapping_ont_bam = os.path.join(self.mutations_dir, 'reference_mapping_ont.bam')
+            self.minimap_ont_fastq(self.reference_fasta, self.ont_fastq, self.reference_mapping_ont_bam)
+            kind_of_reads = 'ONT'
+
+             # Make an mpileup file out of the reads
+            reference_mapping_mpileup = os.path.join(self.mutations_dir, 'reference_mapping_ont.mpileup')
+            self.mpileup_bam(self.reference_mapping_ont_bam, reference_mapping_mpileup, self.mutations_dir)
+       
+            
         self.mutations_read_type = kind_of_reads
 
-        # Make an mpileup file out of the reads
-        reference_mapping_mpileup = os.path.join(self.mutations_dir, 'reference_mapping.mpileup')
-        self.mpileup_bam(self.reference_mapping_bam, reference_mapping_mpileup)
+        ##rplV calling has issues due to repetitive regions where the INDELs occur 
+        ##     - true variants are often at a lower percentage of population (< 30%)
+        ## ONT data is actually better at calling these long-non-homopolymer mutations than illumina in these cases
+        ## For now, will enable indel calling with ONT-only & filter by INDEL type
 
         # Now call and filter variants with Varscan and filter
         varscan_raw_prefix = os.path.join(self.mutations_dir, 'varscan_raw')
         self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'snp', 0.8)
-        if kind_of_reads != 'ONT' :
-            self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'indel', 1./3.)
+
+        #if kind_of_reads != 'ONT' :
+        self.varscan_mpileup(reference_mapping_mpileup, varscan_raw_prefix, 'indel', 1./4.) #changed from 1/3
             
         varscan_prefix = os.path.join(self.mutations_dir, 'varscan')
-        self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'snp')
-        if kind_of_reads != 'ONT' :
-            self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'indel')
+        self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'snp', kind_of_reads)
+        #if kind_of_reads != 'ONT' :
+        self.filter_varscan(varscan_raw_prefix, varscan_prefix, 'indel', kind_of_reads)
             
         # And dump as a VCF
         self.varscan_vcf = self.vcf_varscan(varscan_prefix)
-
         for region_i in range(self.mutation_regions.shape[0]) :
 
             region  = self.mutation_regions.iloc[region_i, :]
@@ -2963,11 +3059,11 @@ class Analysis :
         self.make_finish_file(self.mutations_dir)
         
 
-    def mpileup_bam(self, bam, mpileup) :
+    def mpileup_bam(self, bam, mpileup, output_dir) :
 
         self.print_and_log('Making mpileup from BAM', self.sub_process_verbosity, self.sub_process_color)
         
-        mpileup_stdout, mpileup_stderr = self.std_files(os.path.join(self.mutations_dir, 'mpileup'))
+        mpileup_stdout, mpileup_stderr = self.std_files(os.path.join(output_dir, 'mpileup'))
         command = ' '.join(['samtools mpileup',
                             '-B',
                             '-f', self.reference_fasta,
@@ -2996,23 +3092,41 @@ class Analysis :
         self.validate_file_and_size_or_error(varscan_var, ' '.join(['Varscan', var_type, 'file']), 'cannot be found', 'is empty')
                             
 
-    def filter_varscan(self, in_prefix, out_prefix, var_type) :
+    def filter_varscan(self, in_prefix, out_prefix, var_type, read_type) :
         
         self.print_and_log('Filtering Varscan ' + var_type + ' calls', self.sub_process_verbosity, self.sub_process_color)
         varscan_raw_var = ''.join([in_prefix, '.',var_type])
         varscan_var = ''.join([out_prefix, '.', var_type])
-        ## TODO implement min coverage
-        command = ' '.join(['cat', varscan_raw_var,
-                            '| awk \'(NR > 1 && $9 == 2 && $5 + $6 >= 15)',
-                            '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f%%", f * 100);'
-                            'min = 1 / log(length(s) + 2) / log(10) + 2/10;if(f > min){print}}\'',
-                            '1>' + varscan_var])
+        
+        ## Use this statement for all Illumina sets, and the ONT SNP mode
+        if (read_type == "Illumina") or (var_type == "snp"):
+            command = ' '.join(['cat', varscan_raw_var,
+                                '| awk \'(NR > 1 && $9 == 2 && $5 + $6 >= 15)',
+                                '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f%%", f * 100);'
+                                'min = 1 / log(length(s) + 2) / log(10) + 2/10;if(f > min){print}}\'',
+                                '1>' + varscan_var])
+            ##That complicated 'min' formula scales the minimum percent frequency required by the length of the variant
+            ## Variants of length 1 (SNPs) require at least 59% of reads
+            ## Variants of length 10 (INDELs) require 37% of reads
+            ## Formula is: 1 / (ln(length+2) / ln(10)) + 0.2
+            ## This formula converges on 20% (x -> inf, y -> 0.2); drops from 0.6 -> 0.3 by length=10
+
+        # only use long-non homopolymer INDELs if ONT is used
+        elif (read_type == "ONT") and (var_type == "indel"):
+            ## add the statement that the sequence cannot be a repetition of the same letter (avoid homopolymers)
+            ## also required the INDEL to be at least 6 bp long (length(s) > 5)
+            command = ' '.join(['cat', varscan_raw_var,
+                    '| awk \'(NR > 1 && $9 == 2 && $5 + $6 >= 15)',
+                    '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f%%", f * 100);'
+                    'min = 1 / log(length(s) + 2) / log(10) + 2/10;if(f > min && length(s) > 5 && s~"[^"substr(s,1,1)"]"){print}}\'',
+                    '1>' + varscan_var, '2>' + varscan_var])
+        else:
+            print("Should not have seen this message")
+
         self.print_and_run(command)
         self.validate_file_and_size_or_error(varscan_var, 'Filtered Varscan ' + var_type + ' file', 'cannot be found', 'is empty')
-
-        
+       
     def vcf_varscan(self, varscan_prefix) :
-
 
         ## TODO - Make this shorter,  merge them somehow?
         self.print_and_log('Making VCF from varscan', self.sub_process_verbosity, self.sub_process_color)
@@ -3036,7 +3150,7 @@ class Analysis :
                                 '| awk \'{OFS = "\\t"; print $1,$2,".",$3,$4,-log($14),"PASS",".","GT","1|1"}\'',
                                 '1>' + indel_vcf])
             self.print_and_run(command)
-            found_vcf += [varscan_vcf]
+            found_vcf += [indel_vcf]
 
         command = ' '.join(['cat', ' '.join(found_vcf),
                             '| sort -k 1,1 -k 2n,2n',
@@ -3046,14 +3160,159 @@ class Analysis :
         self.print_and_run(command)
         
         return(varscan_vcf)
+    
+    def draw_circos(self):
+
+        self.print_and_log('Drawing Circos plot of assembly v. reference alignment', \
+                           self.main_process_verbosity, self.main_process_color) 
+
+        ont_reference_coverage_fp = None
+        illumina_reference_coverage_fp = None
+        ## This is off and not exposed due to David Sue's request
+        # virulence_genes_fp = os.path.join(pima_path, 'data/ba_virulence_genes.bd')
+        virulence_genes_fp = None
+
+        # Make the directory for drawings
+        self.circos_dir = os.path.join(self.output_dir, 'circos')
+        if self.find_checkpoint(self.circos_dir):
+            return
+        os.makedirs(self.circos_dir)
+        self.make_start_file(self.circos_dir)
         
+        # Use the reference.sizes file to guide the cicros build
+        reference_sizes_fp = os.path.join(self.insertions_dir, 'reference.sizes')
+        reference_1coords_fp = os.path.join(self.insertions_dir, 'vs_reference.1coords')
+
+        # if no mutation_regions.bed file provided a mutations_dir is not created and we do not have coverage data
+        # however, if a reference genome was provided we can still draw the circos plots
+
+        #self.reference_mapping_ont_bam = os.path.join(self.mutations_dir, 'reference_mapping.bam')
+        if not self.mutation_region_bed:
+            if self.illumina_fastq :
+                self.reference_mapping_illumina_bam = os.path.join(self.circos_dir, 'reference_mapping_illumina.bam')
+                self.minimap_illumina_fastq(self.reference_fasta, self.illumina_fastq, self.reference_mapping_illumina_bam)
+                #kind_of_reads = 'Illumina'
+            
+                # Make an mpileup file out of the reads
+                reference_mapping_mpileup = os.path.join(self.circos_dir, 'reference_mapping_illumina.mpileup')
+                self.mpileup_bam(self.reference_mapping_illumina_bam, reference_mapping_mpileup, self.circos_dir)
+                illumina_reference_coverage_fp = os.path.join(self.circos_dir, 'reference_mapping_illumina.mpileup')
+
+            else : #We'll generate the ONT mapping information during the circos step to build the coverage, but not to call mutations
+                self.reference_mapping_ont_bam = os.path.join(self.circos_dir, 'reference_mapping_ont.bam')
+                self.minimap_ont_fastq(self.reference_fasta, self.ont_fastq, self.reference_mapping_ont_bam)
+                #kind_of_reads = 'ONT'
+
+                # Make an mpileup file out of the reads
+                reference_mapping_mpileup = os.path.join(self.circos_dir, 'reference_mapping_ont.mpileup')
+                self.mpileup_bam(self.reference_mapping_ont_bam, reference_mapping_mpileup, self.circos_dir)
+                ont_reference_coverage_fp = os.path.join(self.circos_dir, 'reference_mapping_ont.mpileup')
+        else:
+            # if we have coverage data from ONT fastq reads we can add it to the coverage plots
+            if self.will_have_ont_fastq:
+                ont_reference_coverage_fp = os.path.join(self.mutations_dir, 'reference_mapping_ont.mpileup')
+
+            # if we have coverage data from the Illumina fastq we are missing the mapped ONT reads (Andy skipped that step when Illumina was provided)
+            if self.illumina_fastq is not None:
+                illumina_reference_coverage_fp = os.path.join(self.mutations_dir, 'reference_mapping_illumina.mpileup')
+
+                # map the ONT reads to the reference assembly if hybrid
+                if self.will_have_ont_fastq:
+                    ont_mapping_dir = os.path.join(self.circos_dir, 'ont_mapping')
+                    os.makedirs(ont_mapping_dir)
+                    ont_reference_mapping_bam = os.path.join(self.circos_dir, 'ont_mapping', 'reference_mapping_ont.bam')
+                    self.minimap_ont_fastq(self.reference_fasta, self.ont_fastq, ont_reference_mapping_bam)
+            
+                    # Make an mpileup file out of the reads
+                    ont_reference_coverage_fp = os.path.join(ont_mapping_dir, 'ont_reference_mapping.mpileup')
+                    self.mpileup_bam(ont_reference_mapping_bam, ont_reference_coverage_fp, self.mutations_dir)
+
+        # Draw one circos plot for each of the contigs in the reference sequence
+        with open(reference_sizes_fp, "r") as fin:
+            for line in fin:
+                contig, contig_size = line.rstrip().rsplit("\t")
+                self.print_and_log('Drawing Circos plot for ' + contig, \
+                                   self.sub_process_verbosity, self.sub_process_color)
+
+                contig_dir = os.path.join(self.circos_dir, contig)
+                os.makedirs(contig_dir)
+                
+                # Pull the aligned regions out of the dnadiff 1coords output
+                contig_alignment_fp = os.path.join(contig_dir, 'alignment.txt')
+                command = ' '.join(['grep', contig, reference_1coords_fp,
+                                    '| awk \'{OFS = "\t";print $(NF - 1),$1,$2,$13}\'',
+                                    '| bedtools merge -d 25 -c 4 -o distinct -i -',
+                                    '1>', contig_alignment_fp, '2> /dev/null'])
+                self.print_and_run(command)
+            
+                # Pull the coverage data from the mpileup file
+                # Coverage files present when no sequence data is provided (just a genome assembly)
+                if (ont_reference_coverage_fp is None and illumina_reference_coverage_fp is None):
+                    contig_coverage_fp = None
+                    illumina_contig_coverage_fp = None
+
+                # coverage files present with ONT fastq reads
+                elif (ont_reference_coverage_fp is not None and illumina_reference_coverage_fp is None):
+                    contig_coverage_fp = os.path.join(contig_dir, 'coverage.mpileup')
+                    illumina_contig_coverage_fp = None
+                    command = ' '.join(['grep', contig, ont_reference_coverage_fp, 
+                                        '| awk \'{OFS = "\t"; print $1,$2,$4}\'',
+                                        '>', contig_coverage_fp])
+                    self.print_and_run(command)
+
+                # coverage files present for Illumina data only
+                elif (ont_reference_coverage_fp is None and illumina_reference_coverage_fp is not None):
+                    contig_coverage_fp = None
+                    illumina_contig_coverage_fp = os.path.join(contig_dir, 'illumina_coverage.mpileup')
+                    command = ' '.join(['grep', contig, illumina_reference_coverage_fp, 
+                                        '| awk \'{OFS = "\t"; print $1,$2,$4}\'',
+                                        '>', illumina_contig_coverage_fp])
+                    self.print_and_run(command)
+
+                # coverage files present for ONT and Illumina data
+                elif (ont_reference_coverage_fp is not None and illumina_reference_coverage_fp is not None):
+                    contig_coverage_fp = os.path.join(contig_dir, 'coverage.mpileup')
+                    command = ' '.join(['grep', contig, ont_reference_coverage_fp, 
+                                        '| awk \'{OFS = "\t"; print $1,$2,$4}\'',
+                                        '>', contig_coverage_fp])
+                    self.print_and_run(command)
+
+                    illumina_contig_coverage_fp = os.path.join(contig_dir, 'illumina_coverage.mpileup')
+                    command = ' '.join(['grep', contig, illumina_reference_coverage_fp, 
+                                        '| awk \'{OFS = "\t"; print $1,$2,$4}\'',
+                                        '>', illumina_contig_coverage_fp])
+                    self.print_and_run(command)
+
+                # Build circos plot with pycircos
+                circos_elem = BuildCircosPlots(ge_name=contig, 
+                ge_size=int(contig_size),
+                aln_file=contig_alignment_fp,
+                cov_file=contig_coverage_fp,
+                illumina_cov_file=illumina_contig_coverage_fp,
+                gene_file=virulence_genes_fp,
+                outdir=contig_dir)
+
+                circos_fig = circos_elem.main()
+                circos_fig.save(file_name=os.path.join(contig_dir,'circos'), format='png', dpi=100)
+
+                # Keep track of images for the report
+                circos_png = os.path.join(contig_dir, 'circos.png')
+                self.contig_alignment[contig] = circos_png
+            
+            self.make_finish_file(self.circos_dir)         
         
     def call_plasmids(self) :
 
         self.print_and_log('Calling plasmids', self.main_process_verbosity, self.main_process_color)
-        
+
+        DockerPathPlasmid = os.path.join('/home/DockerDir/Data/Temp_Data/plasmids_and_vectors.fasta')
+        if not self.validate_file_and_size(self.plasmid_database) and self.validate_file_and_size(DockerPathPlasmid):
+            self.plasmid_database = DockerPathPlasmid
+
         # Make a directory for plasmid stuff
         self.plasmid_dir = os.path.join(self.output_dir, 'plasmids')
+        if self.find_checkpoint(self.plasmid_dir):
+            return
         os.makedirs(self.plasmid_dir)
         self.make_start_file(self.plasmid_dir)
 
@@ -3069,6 +3328,10 @@ class Analysis :
         # TODO - Add something to the report about no small contigs
         small_contigs = self.load_fasta(smaller_contigs_fasta)
         if len(small_contigs) == 0 :
+            self.print_and_log('No contigs smaller than 500kb found, skipping plasmid search', self.sub_process_verbosity, self.sub_process_color)
+            self.did_call_plasmids = True
+            self.plasmids = None
+            self.make_finish_file(self.plasmid_dir)
             return
                                     
         # Query plasmid sequences against the assembly using minimap2
@@ -3078,7 +3341,7 @@ class Analysis :
         command = ' '.join(['minimap2',
                             '-k 20 -p .2 -a',
                             '-t', str(self.threads),
-                            self.genome_fasta,
+                            smaller_contigs_fasta,
                             self.plasmid_database,
                             '1>', plasmid_sam,
                             '2>', minimap_stderr])
@@ -3091,7 +3354,8 @@ class Analysis :
         self.print_and_log('Converting the SAM file to a PSL file', self.sub_process_verbosity, self.sub_process_color)
         plasmid_psl = os.path.join(self.plasmid_dir, 'plasmid_hits.psl')
         sam2psl_stdout, sam2psl_stderr = self.std_files(os.path.join(self.plasmid_dir, 'sam2psl'))
-        command = ' '.join(['sam2psl.py',
+        path2sam2psl = ''.join([pima_path,'/src/','sam2psl.py'])
+        command = ' '.join([path2sam2psl,
                             '-i', plasmid_sam,
                             '-o', plasmid_psl,
                             '1>', sam2psl_stdout, '2>', sam2psl_stderr])
@@ -3104,21 +3368,24 @@ class Analysis :
         # Pass the data onto pChunks
         self.print_and_log('Running pChunks', self.sub_process_verbosity, self.sub_process_color)
         self.pchunks_dir = os.path.join(self.plasmid_dir, 'pChunks')
+        if self.find_checkpoint(self.pchunks_dir):
+            return
         os.makedirs(self.pchunks_dir)
         
         self.plasmid_tsv = os.path.join(self.pchunks_dir, 'plasmids.tsv')
         stdout_file, stderr_file = [os.path.join(self.plasmid_dir, 'pChunks.' + i) for i in ['stdout', 'stderr']]
-        command = ' '.join(['pChunks.R', '--plasmid-psl', plasmid_psl,
+        path2pChunks = ''.join([pima_path,'/','src/pChunks.R'])
+        command = ' '.join([path2pChunks, '--plasmid-psl', plasmid_psl,
                             '--output', self.pchunks_dir,
                             '--no-amr', '--no-inc',
                             '--plasmid-database', self.plasmid_database,
                             '--threads', str(self.threads),
                             '1>' + stdout_file, '2>' + stderr_file])
         self.print_and_run(command)
+        self.plasmid_tsv = os.readlink(os.path.join(self.pchunks_dir, 'plasmids.tsv'))
         self.validate_file_and_size_or_error(self.plasmid_tsv, 'Plasmid output table', 'cannot be found', 'is empty')
         
         # The final file is in pChunks
-        self.plasmid_tsv = os.path.join(self.pchunks_dir, 'plasmids.tsv')
         new_plasmid_tsv = os.path.join(self.plasmid_dir, 'plasmids.tsv')
         command = ' '.join(['cp', self.plasmid_tsv, new_plasmid_tsv])
         self.print_and_run(command)
@@ -3138,6 +3405,8 @@ class Analysis :
         self.print_and_log('Drawing features', self.main_process_verbosity, self.main_process_color)
 
         self.drawing_dir = os.path.join(self.output_dir, 'drawing')
+        if self.find_checkpoint(self.drawing_dir):
+            return
         os.mkdir(self.drawing_dir)
         self.make_start_file(self.drawing_dir)
         
@@ -3240,25 +3509,35 @@ class Analysis :
                     gene_name = gene[3]
                     drugs = self.amr_gene_drug.loc[self.amr_gene_drug[0] == gene_name, :][1]
                     for drug in drugs :
-                        amr_to_draw = amr_to_draw.append(pd.Series([gene_name, drug],
+                        # append -> concat
+                        # append is depreciated, upgrading to concat as requested - not confident this works in all cases so leaving comment in
+                        amr_to_draw = pd.concat([amr_to_draw,pd.DataFrame([[gene_name, drug]], columns=amr_to_draw.columns)]
+                                                , ignore_index=True)
+                        """amr_to_draw = amr_to_draw.append(pd.Series([gene_name, drug],
                                                                        name = amr_to_draw.shape[0],
-                                                                       index = amr_to_draw.columns))
+                                                                       index = amr_to_draw.columns))"""
                 
         # Roll up potentially resistance conferring mutations
         if self.amr_mutations.shape[0] > 0 :
             for mutation_region, mutation_hits in self.amr_mutations.iteritems() : # Idx, DF
                 for mutation_idx, mutation_hit in mutation_hits.iterrows() :
                     mutation_name = mutation_region + ' ' + mutation_hit['REF'] + '->' + mutation_hit['ALT']
-                    amr_to_draw = amr_to_draw.append(pd.Series([mutation_name, mutation_hit['DRUG']],
+                    # append -> concat
+                    amr_to_draw = pd.concat([amr_to_draw,pd.DataFrame([[mutation_name, mutation_hit['DRUG']]], columns=amr_to_draw.columns)]
+                                            , ignore_index=True)
+                    """amr_to_draw = amr_to_draw.append(pd.Series([mutation_name, mutation_hit['DRUG']],
                                                                    name = amr_to_draw.shape[0],
-                                                                   index = amr_to_draw.columns))
+                                                                   index = amr_to_draw.columns))"""
 
         # Roll up deletions that might confer resistance
         if self.amr_deletions.shape[0] > 0 :
             for deletion_idx, deleted_gene in self.amr_deletions.iterrows() :
-                amr_to_draw = amr_to_draw.append(pd.Series(['\u0394' + deleted_gene[3], deleted_gene[5]],
+                # append -> concat
+                amr_to_draw = pd.concat([amr_to_draw,pd.DataFrame([['\u0394' + deleted_gene[3], deleted_gene[5]]], columns=amr_to_draw.columns)]
+                                        , ignore_index=True)
+                """amr_to_draw = amr_to_draw.append(pd.Series(['\u0394' + deleted_gene[3], deleted_gene[5]],
                                                                name = amr_to_draw.shape[0],
-                                                               index = amr_to_draw.columns))
+                                                               index = amr_to_draw.columns))"""
                 
         # If there are no AMR hits, we can't draw the matrix
         if amr_to_draw.shape[0] <= 1 :
@@ -3298,32 +3577,30 @@ class Analysis :
     def make_report(self) :
 
         self.print_and_log("Making report", self.main_process_verbosity, self.main_process_color)
-        
         self.report_dir = os.path.join(self.output_dir, 'report')
+        if self.find_checkpoint(self.report_dir):
+            return
         os.mkdir(self.report_dir)
 
         self.report_prefix = os.path.join(self.report_dir, 'report')
-        self.report_tex = self.report_prefix + '.tex'
+        self.report_md = self.report_prefix + '.md'
+
+        self.markdown_report = PimaReport(self)
+        self.markdown_report.make_report()
+
         self.report_pdf = self.report_prefix + '.pdf'
+        self.validate_file_and_size_or_error(self.report_md, 'Report MD', 'cannot be found', 'is empty')
         
-        self.latex_report = PimaReport(self)
-        self.latex_report.make_report()
-
-        self.validate_file_and_size_or_error(self.report_tex, 'Report TEX', 'cannot be found', 'is empty')
-
-        # See if we are using a local bundle.  
-        bundle_arg = ''
-        if not (self.bundle is None) :
-            bundle_arg = '--bundle ' + self.bundle
-        
-        tectonic_stdout, tectonic_stderr = self.std_files(os.path.join(self.report_dir, 'tectonic'))
-        command = ' '.join(['tectonic',
-                            bundle_arg,
-                            self.report_tex,
+        tectonic_stdout, tectonic_stderr = self.std_files(os.path.join(self.report_dir, 'markdown2pdf'))
+        command = ' '.join(['pandoc -f gfm',
+                            self.report_md,
+                            '-o',
+                            self.report_pdf,
+                            '--pdf-engine=weasyprint',
+                            '--css ' + pima_css,
                            '1>' + tectonic_stdout, '2>' + tectonic_stderr])
         self.print_and_run(command)
-
-        self.validate_file_and_size_or_error(self.report_pdf, 'Report TEX', 'cannot be found', 'is empty')
+        self.validate_file_and_size_or_error(self.report_pdf, 'Report PDF', 'cannot be found', 'is empty')
 
         
     def clean_up(self) :
@@ -3335,12 +3612,15 @@ class Analysis :
             command = ' '.join(['cp', self.genome_fasta, final_fasta])
             self.print_and_run(command)
 
+        ## If the files don't exist - keep running, don't just system exit
         if len(self.files_to_clean) > 0 :
             for file in self.files_to_clean :
-                command = 'rm -r ' + file
-                self.print_and_run(command)
-
-            
+                if os.path.isfile(file):
+                    try:
+                        os.remove(file)
+                    except OSError:
+                        continue
+          
     def go(self) :
 
         if (self.verbosity > 0) :
@@ -3367,13 +3647,10 @@ class Analysis :
                 break
 
             
-def main(opts) :
-
+def main() :
     """ 
 
     """
-if __name__ == '__main__':
-    
     parser = ArgumentParser(prog = "pima.py",
                             add_help = False,
                             description =
@@ -3516,6 +3793,8 @@ if __name__ == '__main__':
                         help = 'Number of worker threads to use (default : %(default)s)')
     other_group.add_argument('--verbosity', required = False, type=int, default = 1, metavar = '<INT>',
                         help = 'How much information to print as PiMA runs (default : %(default)s)')
+    other_group.add_argument('--resume', required = False, action = 'store_true',
+                        help = 'Restart pipeline from last completed step (default : %(default)s)')
     other_group.add_argument('--bundle', required = False, type=str, default = None, metavar = '<PATH>',
                         help = 'Local Tectonic bundle (default : %(default)s)')
     other_group.add_argument('--fake-run', required = False, default = False, action = 'store_true',
@@ -3526,7 +3805,7 @@ if __name__ == '__main__':
     opts.logfile = 'pipeline.log'
  
     if opts.list_organisms:
-        print_organisms()
+        list_organisms()
         sys.exit(0)
     elif opts.help :
         print(Colors.HEADER)
@@ -3538,7 +3817,6 @@ if __name__ == '__main__':
     analysis = Analysis(opts, unknown_args)
     
     analysis.validate_options()
-    
     if len(analysis.errors) > 0 :
         print(Colors.FAIL + '\n\nErrors:')
         [print(i) for i in analysis.errors]
@@ -3549,3 +3827,6 @@ if __name__ == '__main__':
     #If we're still good, start the actual analysis
     analysis.go()
 
+if __name__ == '__main__':
+    main()
+    

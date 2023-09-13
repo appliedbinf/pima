@@ -620,7 +620,7 @@ pChunks = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
 
     ## Link to the best scoring files
     files = c('plasmids.tsv', 'amrFinal.bed')
-    commands = paste('ln -s ', paste0('"$(pwd)/', bestScoringDirectory, '/', files, '"'),
+    commands = paste('ln -s ', paste0('"', bestScoringDirectory, '/', files, '"'),
         paste0(outputDirectory, '/', files))
     printif(commands, verbosity >= 2)
     lapply(commands, system)

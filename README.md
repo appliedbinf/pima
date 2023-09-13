@@ -1,4 +1,4 @@
-# PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
+# PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline [MARKDOWN ENABLED]
 
   * [PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline](#pima-plasmid-integrations-mutations-and-antibiotic-resistance-annotation-pipeline)
    * [Installation](#installation)
@@ -40,43 +40,19 @@ Developers and maintainers, Testers: [Andrew Conley](https://github.com/abconley
 
 # Installation
 ## Method 1. (Preferred) Install using docker
-A docker image of this pipeline, prebuilt with the dependencies, is available at https://github.com/appliedbinf/pima-docker with steps detailing the installation and running the pipeline. This is the easiest way to load and run the pipeline.  
-  
-All the configurations have been performed here for the user and is a lot easier to setup than installing each dependency.
-  
-## Method 2. Using conda yml script
-PiMA pipeline can also be installed using conda environment. We have observed that conda doesn't always faithfully install the dependencies due to version conflicts of dependencies.  Please pay attention to any dependency that may be failing during the process.
+A docker image of this pipeline, prebuilt with the dependencies, is available at https://hub.docker.com/r/appliedbioinformaticslab/pimadocker2 with steps detailing the installation and running the pipeline. This is the easiest way to load and run the pipeline.  
 
-```
-# Install the PIMA base environment (Python 3.6)
-conda env create -f pima.yml
-
-```
-## Method 3. Creating conda environment and loading the dependencies
-If you want to setup conda environment yourself and install all the dependencies, here are the steps:
-
-```
-# You can also install the dependencies while creating the PiMA base environment.
-conda install mamba
-conda create -n pima 
-
-# Activate the conda environement using
-conda activa pima
-
-mamba install -c bioconda -c conda-forge medaka=1.4.3 varscan r flye blast circos minimap2 bwa samtools \
-bedtools pandas pathos joblib pylatex tectonic mummer qcat -y 
-
-# Some more dependencies (si_prefix, dna_features_viewer, and quast) installed using pip installer; conda version do not exactly work
-pip install si_prefix dna_features_viewer
-pip install git+https://github.com/ablab/quast
-
-# Once the dependencies have been installed, proceed to cloning PiMA
-git clone https://github.com/abconley/pima.git
+## Method 2. Install using prebuilt conda package
+A conda package of PiMA is available on our conda channel (appliedbinf)[https://anaconda.org/appliedbinf/dashboard]. Using this package, you can install PiMA into a new conda environment by:
+```{bash}
+conda create -n pima -c appliedbinf -c conda-forge -c bioconda pima
+conda activate pima
+pima -h
 
 # If you want to download the reference file, kraken database, and other required folders, run
-pima.py --download
-
+pima --download
 ```
+
 ## Quickstart Guide
 
 ### A typical run
@@ -85,7 +61,7 @@ Here is an example of a basic run using fast5 files as input.
 
 ```
 # basic command
-./pima.py --output output_folder --ont-fast5 fast5_files --genome-size 5M --threads 12
+./pima --output output_folder --ont-fast5 fast5_files --genome-size 5M --threads 12
 
 ```
 Consider an example scenario where you want to assemble Bacillus anthracis ont reads. If the reference file is named ref.fasta 
@@ -93,7 +69,7 @@ and the query fast5 files are in the folder named barcodes_folder, the mutation 
 and the output folder you named is ont_output then your pima command will look as follows:
 
 ```
-pima.py --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m \
+pima --out ont_output --ont-fast5 barcodes_folder --threads 16 --overwrite --genome-size 5m \
 --verb 3 --reference-genome ref.fasta --mutation-regions mutation_regions.bed
 
 ```
@@ -127,14 +103,14 @@ capability. This command will create the following outputs listed in no particul
 PiMA is a multi-step process that can be run as a single command - base calling, checking for contamination, assembly, generating a quast report, identifying any mutations based on the reference file provided.
 
 ```
-usage: pima.py [--help] 
+usage: pima [--help] 
 
-pima.py - Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
+pima - Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
 
 optional arguments:
   --help, -h, --h
   
-pima.py command: pima.py --output <your output folder name> --ont-fast5 <where the input fast5 files are located> \
+pima command: pima --output <your output folder name> --ont-fast5 <where the input fast5 files are located> \
 --genome-size <5M for Ba; genome size in Mb> --threads <number of parallel threads; 12 is the maximum>
 
 ```
@@ -147,18 +123,18 @@ The full description of each commandline option is provided below.
 
 ```
 
-usage: pima.py [--help] [--version] [--ont-watch <ONT_DIR>] [--ont-watch-min-reads <INT>] [--ont-watch-max-time <HOURS>]
+usage: pima [--help] [--version] [--ont-watch <ONT_DIR>] [--ont-watch-min-reads <INT>] [--ont-watch-max-time <HOURS>]
                [--ont-watch-between-time <MINUTES>] [--ont-watch-min-coverage <X>] [--ont-fast5 <ONT_DIR>]
                [--basecaller {guppy}] [--ont-fastq <FASTQ|GZ>] [--multiplexed] [--error-correct] [--contamination]
                [--only-basecall] [--illumina-fastq <R1> [R2] [<R1> [R2] ...]] [--genome <GENOME_FASTA>]
-               [--output <OUTPUT_DIR>] [--overwrite] [--assembler {wtdbg2,flye}] [--genome-size <GENOME_SIZE>]
+               [--output <OUTPUT_DIR>] [--assembler {wtdbg2,flye}] [--genome-size <GENOME_SIZE>]
                [--assembly-coverage <X>] [--racon] [--racon-rounds <NUM_ROUNDS>] [--no-medaka] [--only-assemble]
                [--no-assembly] [--download] [--plasmids] [--plasmid-database <PLASMID_FASTA>]
                [--amr-database <AMR_FASTA>] [--no-amr] [--inc-database <INC_FASTA>] [--no-inc]
                [--feature <FEATURE_FASTA>] [--no-drawing] [--reference-dir <REFERNCE_DIR>] [--organism <ORGANISM>]
                [--list-organisms] [--auto-reference] [--reference-genome <GENOME_FASTA>]
                [--mutation-regions <REGION_BED>] [--name <NAME>] [--threads <NUM_THREADS>] [--verbosity <INT>]
-               [--bundle <PATH>] [--fake-run]
+               [--bundle <PATH>] [--fake-run] [--overwrite] [--resume]
 
 P.I.M.A. bacterial genome analysis pipeline
 
@@ -185,6 +161,7 @@ Input and basecalilng options:
 Output options:
   --output <OUTPUT_DIR>                       Output directory for the analysis
   --overwrite                                 Overwrite an existing output directory (default : False)
+  --resume                                    Resume a partial run from the last completed step
 
 Assembly options:
   --assembler {wtdbg2,flye}                   Assembler to use (default : flye)
@@ -246,7 +223,13 @@ Other options:
 ## Literature Citations
 If you are using PIMA, please cite the following literature:
 McLaughlin HP, Bugrysheva JV, Conley AB, Gulvik CA, Kolton CB, Marston C, Swaney E, Lonsway DR, Cherney B, Gargis AS, Kongphet-Tran T, Lascols C, Michel P, Villanueva J, Hoffmaster ER, Gee JE, Sue D. 2020. When minutes matter: rapid nanopore whole genome sequencing for anthrax emergency preparedness. Emerging Infectious Diseases  
-  
+
+## FAQ
+
+### Error: "(wkhtmltopdf:<>): Gtk-WARNING **: <>: cannot open display: ".
+
+This error occurs in executing pima in a headless environment with no display environment for wkhtmltopdf to operate in. To solve it, install [xvfb](https://www.x.org/archive/X11R7.6/doc/man/man1/Xvfb.1.xhtml) and then use xvfb-run to execute pima.
+
 ## Software Dependencies
 PIMA utilizes the following programs internally:
 * BCFtools & Samtools: http://www.htslib.org/ [Citation](https://www.ncbi.nlm.nih.gov/pubmed/19505943)

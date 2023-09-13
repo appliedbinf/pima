@@ -1,0 +1,70 @@
+{% set name = "pima" %}
+{% set python = "3.8" %}
+{% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
+
+package:
+  name: "{{ name|lower }}"
+  version: "{{ data.get('version') }}"
+
+source:
+  # git_url: https://github.com/appliedbinf/MergedPima.git
+  # git_tag: development
+  path: ../
+
+
+build:
+  number: 1
+  skip: True  # [win]
+
+requirements:
+  host:
+    - python >=3.8,<3.9
+    - pip
+
+  run:
+    - bedtools
+    - biopython
+    - blast
+    - bwa
+    - curl
+    - flye
+    - mdutils
+    - minimap2
+    - multiprocess
+    - mummer
+    - kraken2
+    - spades
+    #pandas is locked to numpy 1.19.5 by medaka
+    ## if the defaults channel is first, environment is solved using 1.5.2 which yields a numpy error
+    ## solved by fixing pandas
+    - pandas <=1.4.4
+    - pandoc
+    - weasyprint # pdf engine for pandoc
+    - pango
+    - pathos
+    - python >=3.8 #,<3.9
+    - pyfaidx
+    - python_circos ## will replace with the development verison using pip in pima_install.sh script
+    - r
+    - r-hash #needed for pChunks
+    - r-stringr #needed for pChunks
+    - r-gridextra #needed for pChunks
+    - r-optparse #needed for pChunks
+    - samtools #needs to be the conda-forge version and NOT the bioconda version
+    - varscan
+    - qcat
+    - medaka
+    - pilon
+    - quast #installs perl-circos as a dependency...
+
+test:
+
+  commands:
+    - minimap2 -h
+    #- pima --help
+
+about:
+  home: https://githib.com/appliedbinf/MergedPima
+  License: MIT
+
+
