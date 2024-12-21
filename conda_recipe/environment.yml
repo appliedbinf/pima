@@ -1,27 +1,11 @@
-{% set name = "pima" %}
-#{% set python = "3.8" %}
-{% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
+#mirrors meta.yaml but can be used to build a conda enviroment WITHOUT pima for debugging
+name: base
 
-package:
-  name: "{{ name|lower }}"
-  version: "{{ data.get('version') }}"
+channels:
+  - bioconda
+  - conda-forge
 
-source:
-  # git_url: https://github.com/appliedbinf/MergedPima.git
-  # git_tag: development
-  path: ../
-
-
-build:
-  number: 1
-  skip: True  # [win]
-
-requirements:
-  host:
-    - python >=3.9,<3.11 #,<3.9
-    - pip
-
-  run:
+dependencies:
     - git==2.39.1
     - gawk==5.3
     - bedtools==2.31.1
@@ -57,15 +41,3 @@ requirements:
     - polypolish==0.6
     - quast==5.2.0 #installs perl-circos as a dependency...
     - nextflow==24.04.4 # used for parallelizing multiplex runs
-    
-test:
-
-  commands:
-    - minimap2 -h
-    - pima -h
-
-about:
-  home: https://githib.com/appliedbinf/MergedPima
-  License: MIT
-
-

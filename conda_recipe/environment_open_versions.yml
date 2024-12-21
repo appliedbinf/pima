@@ -1,0 +1,43 @@
+name: testpima
+
+channels:
+  - bioconda
+  - conda-forge
+
+dependencies:
+  - git
+  - gawk
+  - bedtools
+  - biopython
+  - blast
+  - bwa
+  - curl
+  - flye
+  - raven-assembler
+  - mdutils
+  - minimap2
+  - multiprocess
+  - mummer
+  - kraken2
+  - spades
+  - pandas
+  - pandoc
+  - weasyprint
+  - pango
+  - pathos
+  - python
+  - pyfaidx
+  - python_circos
+  - r
+  - r-hash
+  - r-stringr
+  - r-gridextra
+  - r-optparse
+  - samtools
+  - varscan
+  - qcat
+  - medaka
+  - pilon
+  - polypolish
+  - quast
+  - nextflow

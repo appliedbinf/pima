@@ -1,0 +1,69 @@
+conda.enabled = true
+conda.useMamba = true
+
+params {
+    config_profile_description = 'Rosalind HPC @ CDC'
+    config_profile_contact = 'OAMD'
+    config_profile_url = 'https://info.biotech.cdc.gov/info/'
+    custom_config_version = 'master'
+
+    // Default resource parameters. Expecting to be overwritten.
+    max_memory                 = '128.GB'
+    max_cpus                   = 16
+    max_time                   = '240.h'
+}
+
+
+executor {
+    name = 'sge'
+    pollInterval = '10sec'
+    submitRateLimit = '2sec'
+    queueSize = 24
+}
+
+process {
+    executor = 'sge'
+    penv = 'smp'
+    queue = 'all.q'
+    beforeScript = None
+    conda = None
+    errorStrategy = { task.exitStatus in 137..140 ? 'retry' : 'terminate' }
+    maxRetries = 3
+    maxErrors     = '-1'
+    // Set h_vmem option for qsub submissions. +6 memory to h_vmem prevents memory allocation errors.
+    clusterOptions = { "-l h_vmem=${(check_max((task.memory.toGiga())+6), 'memory').toString().replaceAll(/[\sB]/,'')}G" }
+    cpus   = { check_max( 6     * task.attempt, 'cpus'    ) }
+    memory = { check_max( 36.GB * task.attempt, 'memory'  ) }
+    time   = { check_max( 8.h   * task.attempt, 'time'    ) }
+}
+
+def check_max(obj, type) {
+    if (type == 'memory') {
+        try {
+            if (obj.compareTo(params.max_memory as nextflow.util.MemoryUnit) == 1)
+                return params.max_memory as nextflow.util.MemoryUnit
+            else
+                return obj
+        } catch (all) {
+            println "   ### ERROR ###   Max memory '${params.max_memory}' is not valid! Using default value: $obj"
+            return obj
+        }
+    } else if (type == 'time') {
+        try {
+            if (obj.compareTo(params.max_time as nextflow.util.Duration) == 1)
+                return params.max_time as nextflow.util.Duration
+            else
+                return obj
+        } catch (all) {
+            println "   ### ERROR ###   Max time '${params.max_time}' is not valid! Using default value: $obj"
+            return obj
+        }
+    } else if (type == 'cpus') {
+        try {
+            return Math.min( obj, params.max_cpus as int )
+        } catch (all) {
+            println "   ### ERROR ###   Max cpus '${params.max_cpus}' is not valid! Using default value: $obj"
+            return obj
+        }
+    }
+}

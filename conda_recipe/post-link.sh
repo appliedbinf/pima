@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 
-pima_install.sh >$CONDA_PREFIX/pima_install.log 2>&1
+python -m pip install --no-deps dna_features_viewer si-prefix 
 
-cat >>"$PREFIX/.messages.txt" <<EOF
-  ----------------------------------------------------------------------
-  
-  ${PKG_NAME} version ${PKG_VERSION}-${PKG_BUILDNUM} has been 
-  
-  successfully installed!
-  
-  ---------------------------------------------------------------------- 
-EOF
+# upgrade python_circos from the conda version that controls the dependencies, but lacks features
+python -m pip install --force-reinstall --no-deps git+https://github.com/ponnhide/pyCircos.git
 

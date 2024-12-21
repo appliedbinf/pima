@@ -1,10 +1,7 @@
-#import sys
-#allow "|" if using python3.7 -> 3.9
 from __future__ import annotations
 
 import os
 from collections import defaultdict
-#from copy import deepcopy
 
 from pycircos import Garc, Gcircle
 import matplotlib.pyplot as plt
@@ -251,7 +248,7 @@ class BuildCircosPlots:
                     gene_dict['pos'].append(start)
                     gene_dict['width'].append(width)
                     label_pos.append(int(round(start + (width / 2),0)))
-                    label_id.append(f"$\it\u007b{gene_name}\u007d$")
+                    label_id.append(f"$\\it\u007b{gene_name}\u007d$")
 
         if len(gene_dict['pos']) > 0:
             self.ge_circle.barplot(garc_id = self.ge_name,
@@ -274,7 +271,7 @@ class BuildCircosPlots:
     def build_legend(self) -> None:
         """Generates the legend showing: genome:genome alignments, contig IDs, and the coverage data"""
         leg = []
-        leg.append(mpatches.Patch(facecolor = "#FFFFFF", edgecolor= "#000000", label = "No alignment to $\it{Ba}$ Ames Ancestor"))
+        leg.append(mpatches.Patch(facecolor = "#FFFFFF", edgecolor= "#000000", label = "No alignment to reference"))
         #leg.append(mpatches.Patch(facecolor = "#1f77b4", label = ">98%% sequence alignment to $\it{Ba}$ Ames Ancestor"))
         #leg.append(mpatches.Patch(facecolor = "#808080", label = 'Inner: ONT Coverage across $\it{Ba}$ Ames Ancestor'))
         #leg.append(mpatches.Patch(facecolor = "#808080", label = "Outer: Illumina Coverage across $\it{Ba}$ Ames Ancestor"))
@@ -286,16 +283,16 @@ class BuildCircosPlots:
 
         #both illumina and ONT coverage data
         if len(self.cov_dict['cov']) != 0 and len(self.illumina_cov_dict['cov']) != 0:
-            leg.append(mpatches.Patch(facecolor = "#808080", label = 'Inner: ONT Coverage across $\it{Ba}$ Ames Ancestor'))
-            leg.append(mpatches.Patch(facecolor = "#808080", label = "Outer: Illumina Coverage across $\it{Ba}$ Ames Ancestor"))
+            leg.append(mpatches.Patch(facecolor = "#808080", label = 'Inner: ONT Coverage across reference'))
+            leg.append(mpatches.Patch(facecolor = "#808080", label = "Outer: Illumina Coverage across reference"))
 
         # only ONT
         elif len(self.cov_dict['cov']) != 0:
-            leg.append(mpatches.Patch(facecolor = "#808080", label = 'ONT Coverage across $\it{Ba}$ Ames Ancestor'))
+            leg.append(mpatches.Patch(facecolor = "#808080", label = 'ONT Coverage across reference'))
 
         # only Illumina
         elif len(self.cov_dict['cov']) == 0 and len(self.illumina_cov_dict['cov']) != 0:
-            leg.append(mpatches.Patch(facecolor = "#808080", label = 'Illumina Coverage across $\it{Ba}$ Ames Ancestor'))
+            leg.append(mpatches.Patch(facecolor = "#808080", label = 'Illumina Coverage across reference'))
             
         #self.ge_circle.ax.legend(handles=leg, prop={'size': 9}, bbox_to_anchor=(0.18,0.11)) #loc=3
         self.ge_circle.figure.legend(handles=leg, prop={'size': 9}, loc=3)
@@ -360,7 +357,7 @@ if __name__ == "__main__":
 
         # build the reference.sizes file
         command = ' '.join(['faidx -i chromsizes', reference_genome, ' | sort -k 1,1 -k 2,2n'])
-        reference_sizes = [x for x in re.split('\\n', subprocess.check_output(command, shell = True).decode('utf-8')) if x] 
+        reference_sizes = [x for x in re.split(r'\n', subprocess.check_output(command, shell = True).decode('utf-8')) if x] 
 
         # add the gene file
         gene_file = args.gene_file
@@ -387,7 +384,7 @@ if __name__ == "__main__":
                                           raxis_range=[600,700],
                                           facecolor="#1f77b4",
                                           linewidth=0)
-            circos_fig.save(file_name=f"{outdir}/{ge_name}", format=image_format , dpi=300)
+            circos_fig.save(file_name=f"{outdir}/{ge_name}", format=args.image_format , dpi=300)
 
     ## Building custom pima plots
     else:

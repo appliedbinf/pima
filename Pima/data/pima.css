@@ -40,7 +40,9 @@ a:visited {
     color: #1a1a1a;
 }
 img {
-    max-width: 100%;
+    margin: auto;
+    display: block;
+    max-width: 70%;
 }
 h1, h2, h3, h4, h5, h6 {
     margin-top: 1.4em;
@@ -92,11 +94,8 @@ hr {
 table {
     border-collapse: collapse;
     font-variant-numeric: lining-nums tabular-nums;
-    /*
-    margin-left: auto;
-    margin-right: auto; */
+    font-size: 80%;
 }
-
 table caption {
     margin-bottom: 0.75em;
 }
@@ -112,7 +111,6 @@ th {
 }
 td {
     padding: 0.125em 0.5em 0.25em 0.5em;
-
 }
 
 tr:nth-child(even) {background: #CCC}

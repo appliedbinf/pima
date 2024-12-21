@@ -1,0 +1,46 @@
+#contig	start	stop	name	type	drug	priority	note
+chromosome	2322815	2322816	sigP	snp	beta-lactam	confirmed_location	A to G mutation at this location in sigP has been shown to confer penicillin resistance in a lab setting.
+chromosome	2323276	2323277	rsiP	indel	beta-lactam	confirmed_location	A single deletion in a homopolyer region that is part of the end of sigP and beginning of rsiP (sigma / antisigma factors) has been shown to confer penicillin resistance in a lab setting.
+chromosome	2323283	2323284	rsiP	indel	beta-lactam	confirmed_location	The insertion of G has been shown to confer penicillin resistance in a lab setting.
+chromosome	2323306	2323307	rsiP	indel	beta-lactam	confirmed_location	Deletion of A has been shown to confer penicillin resistance in a lab setting.
+chromosome	2323738	2323739	rsiP	snp	beta-lactam	confirmed_location	SNP in this location has been shown to confer penicillin resistance in a lab setting.
+chromosome	2323738	2323739	rsiP	indel	beta-lactam	confirmed_location	The insertion of G has been shown to confer penicillin resistance in a lab setting.
+chromosome	2323919	2323925	rsiP	indel	beta-lactam	confirmed_location	A 7bp deletion in this location has been shown to confer penicillin resistance in a lab setting.
+chromosome	2324040	2324078	rsiP	indel	beta-lactam	confirmed_location	Single A deletion has been shown to confer penicillin resistance in a lab setting.
+chromosome	124375	124396	rplV	indel	macrolide	confirmed_location	A 24bp insertion in rplV has been shown to confer macrolide resistance in a lab setting.
+chromosome	124351	124363	rplV	indel	macrolide	confirmed_location	A 12bp insertion in rplV has been shown to confer macrolide resistance in a lab setting.
+chromosome	5053	5054	gyrB	snp	quinolones	confirmed_location	A to G mutation in gyrB has been shown to confer quinolone resistance in a lab setting.
+chromosome	5892	5893	gyrB	snp	quinolones	confirmed_location	A to G mutation in gyrB has been shown to confer quinolone resistance in a lab setting.
+chromosome	6006	6007	gyrB	snp	quinolones	confirmed_location	A G to A mutation in gyrB has been shown to confer quinolone resistance in a lab setting.
+chromosome	6847	6848	gyrA	snp	quinolones	confirmed_location	C to T mutation in gyrA has been shown to confer quinolone resistance in a lab setting.
+chromosome	6849	6850	gyrA	snp	quinolones	confirmed_location	G to C mutation in gyrA has been shown to confer quinolone resistance in a lab setting.
+chromosome	6850	6851	gyrA	snp	quinolones	confirmed_location	C to G mutation in gyrA has been shown to confer quinolone resistance in a lab setting.
+chromosome	6858	6859	gyrA	snp	quinolones	confirmed_location	G to A mutation in gyrA has been shown to confer quinolone resistance in a lab setting.
+chromosome	6859	6860	gyrA	snp	quinolones	confirmed_location	A to C mutation in gyrA has been shown to confer quinolone resistance in a lab setting.
+chromosome	6860	6861	gyrA	snp	quinolones	confirmed_location	A to G mutation in gyrA has been shown to confer quinolone resistance in a lab setting.
+chromosome	3362946	3362947	parC	snp	quinolones	confirmed_location	C to either T or A mutations in parC have been shown to confer quinolone resistance in lab settings
+chromosome	3362947	3362948	parC	snp	quinolones	confirmed_location	C to T mutation in parC have been shown to confer quinolone resistance in lab settings
+chromosome	3362950	3362951	parC	snp	quinolones	confirmed_location	T to C mutation in parC have been shown to confer quinolone resistance in lab settings
+chromosome	3362957	3362958	parC	snp	quinolones	confirmed_location	G to A mutation in parC have been shown to confer quinolone resistance in lab settings
+chromosome	3362992	3362993	parC	snp	quinolones	confirmed_location	Any mutation in parC at this location has been shown to confer quinolone resistance in lab setting
+chromosome	3364886	3364887	parC	snp	quinolones	confirmed_location	G to A mutation in parC has been shown to confer quinolone resistance in lab settings
+chromosome	3365453	3365454	parC	snp	quinolones	confirmed_location	G to T mutation in parC has been shown to confer quinolone resistance in lab settings
+chromosome	3366419	3366420	parE	snp	quinolones	confirmed_location	Any mutation in parE at this location has been shown to confer quinolone resistance in lab setting
+chromosome	748008	842715	tetR	large-indel	quinolones	confirmed_location	Multiple large deletions in this region have been shown to confer quinolone resistance under lab conditions.
+chromosome	842290	842291	tetR	indel	quinolones	confirmed_location	Single T deletion has been shown to confer quinolone resistance in a lab setting
+chromosome	842290	842291	tetR	indel	quinolones	confirmed_location	A 5 bp deletion has been shown to confer quinolone resistance in a lab setting
+chromosome	842398	842399	tetR	indel	quinolones	confirmed_location	A 2 bp insertion has been shown to confer quinolone resistance in a lab setting
+chromosome	842517	842518	tetR	snp	quinolones	confirmed_location	C to T mutation has been shown to confer quinolone resistance in lab settings
+chromosome	842613	842614	tetR	indel	quinolones	confirmed_location	An 11 bp insertion has been shown to confer quinolone resistance in lab settings
+chromosome	842709	842710	tetR	indel	quinolones	confirmed_location	A 2 bp insertion has been shown to confer quinolone resistance in a lab setting
+chromosome	842714	842715	tetR	indel	quinolones	confirmed_location	A 1 bp deletion has been shown to confer quinolone resistance in a lab setting
+chromosome	108732	108733	rpoB	snp	rifamycim	confirmed_location	G to T mutation has been shown to confer rifamycim resistance in lab settings
+chromosome	2322745	2323278	sigP	any	beta-lactam	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer beta-lactam resistance under laboratory conditions
+chromosome	2323268	2324095	rsiP	any	beta-lactam	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer beta-lactam resistance under laboratory conditions
+chromosome	124091	124432	rplV	any	macrolide	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer macrolide resistance under laboratory conditions
+chromosome	4583	6505	gyrB	any	quinolones	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer quinolone  resistance under laboratory conditions
+chromosome	6594	9065	gyrA	any	quinolones	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer quinolone  resistance under laboratory conditions
+chromosome	3362704	3365127	parC	any	quinolones	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer quinolone  resistance under laboratory conditions
+chromosome	3365129	3367093	parE	any	quinolones	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer quinolone  resistance under laboratory conditions
+chromosome	842402	842980	tetR	any	quinolones	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer quinolone  resistance under laboratory conditions
+chromosome	108390	111923	rpoB	any	rifamycim	potential_confer_amr	While this mutation has not been observed before, other mutations in this region confer rifamycim resistance under laboratory conditions

@@ -1,0 +1,72 @@
+{% set name = "pima" %}
+{% set python = "3.8" %}
+{% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
+
+package:
+  name: "{{ name|lower }}"
+  version: "{{ data.get('version') }}"
+
+source:
+  # git_url: https://github.com/appliedbinf/MergedPima.git
+  # git_tag: development
+  path: ../
+
+
+build:
+  number: 7
+  skip: True  # [win]
+
+requirements:
+  host:
+    - python
+    - pip
+
+  run:
+    - git
+    - gawk
+    - bedtools
+    - biopython
+    - blast
+    - bwa
+    - curl
+    - flye
+    - raven-assembler
+    - mdutils
+    - minimap2
+    - multiprocess
+    - mummer
+    - kraken2
+    - spades
+    - pandas
+    - pandoc
+    - weasyprint
+    - pango
+    - pathos
+    - python
+    - pyfaidx
+    - python_circos
+    - r
+    - r-hash
+    - r-stringr
+    - r-gridextra
+    - r-optparse
+    - samtools
+    - varscan
+    - qcat
+    - medaka
+    - pilon
+    - polypolish
+    - quast
+    - nextflow
+    
+test:
+
+  commands:
+    - minimap2 -h
+    - pima -h
+
+about:
+  home: https://githib.com/appliedbinf/MergedPima
+  License: MIT
+
+

@@ -1,14 +1,24 @@
+#TEMP DEV
+Pima_refactor_notes.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
 # database files
-data/plasmids_and_vectors*
-data/kraken2*
+Pima/data/plasmids_and_vectors*
+Pima/data/kraken2*
+Pima/data/reference_sequences/Bacillus_anthracis/genome.fasta*
+
+# Nextflow
+Pima/nextflow_parallelization/nextflow.config
 
 # C extensions
 *.so
+
+# raven files?
+raven.cereal
 
 # Distribution / packaging
 .Python
