@@ -76,7 +76,7 @@ PiMA2 now includes the [raven](https://github.com/lbcb-sci/raven) assembler as a
 
 There are two options when using [Flye](https://github.com/mikolmogorov/Flye) (the default assembler). If PiMA detects a SUP model, Flye will be run with the `--nano-hq` flag to indicate high quality nanopore reads are being used.
 
-## Shortread (Illumina) polishing options <!-- omit in toc -->
+### Shortread (Illumina) polishing options <!-- omit in toc -->
 
 PiMA2 includes [polypolish](https://github.com/rrwick/Polypolish) in addition to [pilon](https://github.com/broadinstitute/pilon) as options to polish the ONT-based genome assembly. Polypolish is more conservative and is less likely to change the ONT-based assembly. A much more indepth discussion on short-read polishers can be found on [Ryan Wick's blog](https://rrwick.github.io/2023/05/15/short-read-polishing-short-read-assemblies.html). We have kept pilon as the default setting, for now but typically opt for polypolish in the rare instances we have Illumina data as well.
 
