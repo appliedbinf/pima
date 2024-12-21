@@ -42,7 +42,7 @@ PiMA has not been cleared or approved by the FDA. The results are intended for p
 
 # Main differences in version 2
 
-PiMA was rewritten and restructured to make it easier to maintain and add new features. With some notable exceptions, the code base is similar and has just been split into mutiple modules to separate steps into different scripts. Upgrading from pima1 to pima2 will not drastically change the results.
+PiMA was rewritten and restructured to make it easier to maintain and add new features. With some notable exceptions, the code base is similar and has just been split into separate modules. Upgrading from pima1 to pima2 will not drastically change the results. The major changes are described in detail below.
 
 ## Significant changes
 
@@ -68,6 +68,16 @@ PiMA1 required the users to esimate the final size of the expected genome assemb
 The median coverage across all positions from these genes is extracted and the estimated genome size is calculated using the formula (genome_size = number of bases sequenced / median coverage).
 
 If possible we recommend setting this based on your target organism (Bacillus anthracs ~ 5.5m).
+
+### ONT assembly options
+
+PiMA2 now includes the (raven)[https://github.com/lbcb-sci/raven] assembler as an option. We recommend using Flye in most cases, but for some samples raven does a slightly better job.
+
+There are two options when using (Flye)[https://github.com/mikolmogorov/Flye] (the default assembler). If PiMA detects a SUP model, Flye will be run with the `--nano-hq` flag to indicate high quality nanopore reads are being used.
+
+## Shortread (Illumina) polishing options
+
+PiMA2 includes (polypolish)[https://github.com/rrwick/Polypolish] in addition to (pilon)[https://github.com/broadinstitute/pilon] as options to polish the ONT-based genome assembly. Polypolish is more conservative and is less likely to change the ONT-based assembly. A much more indepth discussion on short-read polishers can be found on [Ryan Wick's blog](https://rrwick.github.io/2023/05/15/short-read-polishing-short-read-assemblies.html). We have kept pilon as the default setting, for now but typically opt for polypolish in the rare instances we have Illumina data as well.
 
 ### Parallelizing PiMA on HPCs
 
