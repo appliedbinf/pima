@@ -15,9 +15,6 @@ class Settings():
         self.kraken_database_default = os.path.join(self.pima_path, 'data/kraken2')
         self.reference_dir_default = os.path.join(self.pima_path, 'data/reference_sequences')
         self.pima_css = os.path.join(self.pima_path,'data/pima.css')
-
-        ## Specific for CDC version
-        #self.virulence_genes_fp = None
         self.virulence_genes_fp = os.path.join(self.data_dir, "reference_sequences/Bacillus_anthracis/ba_virulence_genes.bed")
 
         ## Docker specific paths
