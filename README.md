@@ -1,4 +1,4 @@
-# PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline
+# PIMA 2: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline (version 2)
 
 - [PIMA: Plasmid, Integrations, Mutations, and Antibiotic resistance annotation pipeline](#pima-plasmid-integrations-mutations-and-antibiotic-resistance-annotation-pipeline)
 - [Main differences in version 2](#main-differences-in-version-2)
