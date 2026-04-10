@@ -29,10 +29,79 @@ def validate_ont_fastq(pima_data: PimaData, settings: Settings):
     if not pima_data.ont_fastq:
         return
 
+    if not os.path.exists(pima_data.ont_fastq):
+        error_out(
+            pima_data,
+            "The provided {pima_data.ont_fastq} path does not exist. Please check your input. Exiting."
+        )
+
     if os.path.isdir(pima_data.ont_fastq):
-        pima_data.errors.append(f"The provided '--ont-fastq' is a directory, did you mean to include the '--multiplexed' flag?\nOffending input: {pima_data.ont_fastq}")
-        return
+        fastq_paths = []
+        
+        if pima_data.analysis_name != "Genome":
+            ont_fastq = os.path.join(pima_data.output_dir, f"{pima_data.analysis_name}.fastq")
+        else:
+            ont_fastq = os.path.join(pima_data.output_dir, f"{os.path.basename(pima_data.ont_fastq)}.fastq")
+        #pima_data.errors.append(f"The provided '--ont-fastq' is a directory, did you mean to include the '--multiplexed' flag?\nOffending input: {pima_data.ont_fastq}")
+        print_and_log(
+            pima_data,
+            f"The provided '--ont-fastq' is a directory, checking if we can create a concatenated fastq file",
+            pima_data.warning_verbosity,
+            pima_data.warning_color,
+        )        
+        
+        for root, dirs, files in os.walk(pima_data.ont_fastq):
+            if len(dirs) > 0:
+                message = (
+                f"The provided --ont-fastq path contains nested directories. PiMA does not know how to handle this input in singleplex mode. "
+                f"Please provide either a path to a fastq(.gz) file or a directory containing fastq(.gz) files from the same sample. "
+                f"Alternatively, you can try and run PiMA in multiplex mode (--multiplex and optionally --nextflow) where nested directories represent different samples. "
+                f"If a sample-sheet was provided as input, you'll need to correct the ont-fastq path to point to a single sample fastq/directory of fastqs."
+                )
+                error_out(
+                    pima_data,
+                    message)
+
+            if len(files) > 0:
+                if re.search(r"fastq",files[0]):
+                    file_pat = files[0].split('.')[0]
+                    file_pat = file_pat.rsplit('_',1)[0]
+                    if not all(re.search(file_pat, file) for file in files):
+                        non_match_gen = (x for x in files if not re.search(file_pat, x))
+                        non_match = next(non_match_gen)
+                        message = (
+                            "The provided --ont-fastq path contains fastq_files that do not share the same prefix. "
+                            "This suggests they do not belong to the same sample and should not be concatenated. "
+                            f"For example:\n{files[0]}\n{non_match}\n"
+                            "Exiting"
+                        )
+                        error_out(
+                            pima_data,
+                            message,
+                        )
+                    fastq_paths = [os.path.join(root, f) for f in files]
     
+                print_and_log(
+                        pima_data,
+                        "Concatenating barcode fastq files",
+                        pima_data.sub_process_verbosity,
+                        pima_data.sub_process_color,
+                )
+
+                if re.search(r'\.(gz|gzip)$', fastq_paths[0]):
+                    ont_fastq = ont_fastq + ".gz"
+
+                command = " ".join(
+                    [
+                        "cat",
+                        " ".join(fastq_paths),
+                        f"> {ont_fastq}",
+                    ]
+                )
+                
+                print_and_run(pima_data, command)
+                pima_data.ont_fastq = ont_fastq
+
     print_and_log(
         pima_data,
         "Validating ONT FASTQ",

@@ -12,7 +12,22 @@ workflow {
 
     samples = Channel
         .fromPath(params.sample_sheet)
-        .splitCsv(header:false, sep:",")
+        .splitCsv(header:true, sep:",")
+        .map { row -> 
+            [ 
+                sample_id                    : row.sample_name,
+                output_directory             : row.output_directory,
+                ont_fastq                    : row.ont_fastq,
+                illumina_fastq               : row.illumina_r1,
+                genome                       : row.genome,
+                genome_size                  : row.genome_size,
+                reference_organism           : row.reference_organism,
+                reference_genome             : row.reference_genome,
+                reference_mutation_bed_file  : row.reference_mutation_bed_file,
+                self_circos                  : row.self_circos,
+                pima_cmd                     : row.original_command
+            ]
+        }
 
     PIMA_SINGLEPLEX( samples )
 

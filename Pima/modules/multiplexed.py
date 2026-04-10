@@ -5,8 +5,10 @@ import copy
 import datetime
 import glob
 import shutil
+import csv
 
 from collections import defaultdict
+from dataclasses import dataclass
 
 from Pima.pima_data import PimaData
 from Pima.utils.settings import Settings
@@ -16,19 +18,34 @@ import Pima.pima
 from Pima.utils.utils import (
     print_and_log,
     print_and_run,
+    error_out,
     std_files,
     stop_logging,
     validate_utility,
+    validate_file_and_size_or_error,
 )
 
+@dataclass
 class barcode_data:
-    def __init__(self, barcode_id: str, barcode_root_path: str | list, barcode_fastq_list: list, barcode_fastq_paths: list, barcode_size_bytes: int):
-        self.barcode_id = barcode_id
-        self.barcode_root_path = barcode_root_path
-        self.barcode_fastq_list = barcode_fastq_list
-        self.barcode_fastq_paths = barcode_fastq_paths
-        self.barcode_size_bytes = barcode_size_bytes
-        self.barcode_size_bp = None
+    barcode_id: str
+    from_sample_sheet: bool = False
+    #sample_sheet_specific vals
+    illumina_r1: str | None = None
+    illumina_r2: str | None = None
+    genome: str | None = None
+    genome_size: str | None = None
+    reference_organism: str | None = None
+    reference_genome: str | None = None
+    reference_mutation_bed_file: str | None = None
+    self_circos: str | None = None
+    
+    #multiplex decoding vals
+    ont_fastq: str | None = None
+    barcode_root_path: str | list | None = None
+    barcode_fastq_list: list = None
+    barcode_fastq_paths: list = None
+    barcode_size_bytes: int = None
+    barcode_size_bp: int | None = None
 
     def update_barcode(self, barcode_root_path: str, barcode_fastq_list: list, barcode_fastq_paths: list, barcode_size_bytes: int):
         self.barcode_root_path = [self.barcode_root_path, barcode_root_path]
@@ -37,16 +54,19 @@ class barcode_data:
         self.barcode_size_bytes = self.barcode_size_bytes + barcode_size_bytes
 
     def create_concat_fastq(self, pima_data, fastq_path:str = None):
+        if self.from_sample_sheet:
+            return
+
         if len(self.barcode_fastq_list) == 1:
             if fastq_path:
                 #for nf multiplexing
                 if re.search(r'\.(gz|gzip)$', self.barcode_fastq_list[0]):
                     fastq_path = fastq_path + ".gz"
                 os.symlink(self.barcode_fastq_paths[0], fastq_path)
-                pima_data.ont_fastq = fastq_path
+                self.ont_fastq = fastq_path
 
             else:
-                pima_data.ont_fastq = self.barcode_fastq_paths[0]
+                self.ont_fastq = self.barcode_fastq_paths[0]
             return
         
         print_and_log(
@@ -57,37 +77,78 @@ class barcode_data:
         )
 
         if re.search(r'\.(gz|gzip)$', self.barcode_fastq_list[0]):
-            pima_data.ont_fastq = pima_data.ont_fastq + ".gz"
-
+            if fastq_path:
+                self.ont_fastq = fastq_path + ".gz"
+                pima_data.ont_fastq = self.ont_fastq
+            else:
+                self.ont_fastq = pima_data.ont_fastq + ".gz"
+                pima_data.ont_fastq = self.ont_fastq
         command = " ".join(
             [
                 "cat",
                 " ".join(self.barcode_fastq_paths),
-                f"> {pima_data.ont_fastq}",
+                f"> {self.ont_fastq}",
             ]
         )
         print_and_run(pima_data, command)
 
-    def report_multiplex_sample(self):
+    def report_sample(self):
         message = f"Running PiMA on {self.barcode_id}"
         return message
 
 
 def validate_multiplex_fastq(pima_data: PimaData):
-    if not pima_data.multiplexed:
+    if not (pima_data.multiplexed or pima_data.sample_sheet):
         return
     
-    if pima_data.resume and pima_data.nextflow:
-        pima_data.errors.append("--resume does not currently work with nextflow multiplexing. If the assemblies were completed in the previous attempt, you can resume the multiplex run in serial by removing '--nextflow' or resume each sample independently without '--multiplexed', otherwise just use '--overwrite'")
-        
-    if not pima_data.ont_fastq:
-        pima_data.errors.append("--multiplexed requires that a directory of FASTQ files or directories of FASTQ files be given")
+    if pima_data.nextflow and not (pima_data.multiplexed or pima_data.sample_sheet):
+        error = "Nextflow is only useful for multiplexed data"
+        error_out(
+            pima_data,
+            error,
+        )
 
+    if pima_data.sample_sheet and any([pima_data.ont_fastq, pima_data.illumina_fastq]):
+        error_out(
+            pima_data,
+            "No other data inputs allowed when providing a sample_sheet. See an example by running 'pima --example-sample-sheet'",
+        )
+
+    if pima_data.resume and pima_data.nextflow:
+        error_out(
+            pima_data,
+            "--resume does not currently work with nextflow multiplexing. If the assemblies were completed in the previous attempt, you can resume the multiplex run in serial by removing '--nextflow' or resume each sample independently without '--multiplexed', otherwise just use '--overwrite'",
+        )
+    if not any([pima_data.ont_fastq, pima_data.sample_sheet]):
+        error_out(
+            pima_data,
+            "--multiplexed requires that a directory of FASTQ files or directories of FASTQ files be given",
+        )
+
+    if pima_data.sample_sheet:
+        validate_file_and_size_or_error(pima_data, pima_data.sample_sheet)
+        pima_data.multiplexed = True
+        return
+         
+    # Conditions for when not using a sample_sheet
     if pima_data.illumina_fastq:
-        pima_data.errors.append("--multiplexing does not currently work with illumina data. Exiting")
+        error_out(
+            pima_data,
+            "--multiplexing with illumina data only works by providing a --sample-sheet as input. Exiting",
+        )
+
+    if not os.path.exists(pima_data.ont_fastq):
+        error_out(
+            pima_data,
+            f"The provided ont-fastq path: {pima_data.ont_fastq} does not exist. Please check your input. Exiting."
+        )
+
 
     if pima_data.barcode_min_fraction >= 1:
-        pima_data.errors.append(f"--barcode_min_fraction is greater than 1, did you mean to use {pima_data.barcode_min_fraction / 100}?") 
+        error_out(
+            pima_data,
+            f"--barcode_min_fraction is greater than 1, did you mean to use {pima_data.barcode_min_fraction / 100}?",
+        ) 
 
     if pima_data.genome_assembly_size is not None and pima_data.genome_assembly_size != "estimate":
         print_and_log(
@@ -107,105 +168,189 @@ def validate_multiplex_fastq(pima_data: PimaData):
                     "Please let us know if this is a feature you'd like to see added."
                     "Exiting now"
         )
-        pima_data.errors.append(message)
+        error_out(
+            pima_data,
+            message,
+        )
 
-    pima_data.will_have_ont_fastq = True
     pima_data.ont_fastq = os.path.realpath(pima_data.ont_fastq)
     pima_data.output_dir = os.path.realpath(pima_data.output_dir)
 
 
 def identify_multiplexed_fastq_files(pima_data: PimaData):
-        
-        print_and_log(
+
+    print_and_log(
+        pima_data,
+        "Starting Multiplex Analysis",
+        pima_data.main_process_verbosity,
+        pima_data.main_process_color,
+    )
+    
+    multiplexed_dirs = defaultdict()
+    total_dir_size = 0
+
+    if not any(os.path.isdir(os.path.join(pima_data.ont_fastq, item)) for item in os.listdir(pima_data.ont_fastq)) and any([re.search(r"fastq", item) for item in os.listdir(pima_data.ont_fastq)]):
+        #user is providing a directory containing fastq files for each sample
+        for fastq in os.listdir(pima_data.ont_fastq):
+            name = os.path.splitext(os.path.basename(fastq))[0]
+
+            if re.search(r"\.(gz|gzip)$", fastq):
+                name = os.path.splitext(os.path.splitext(fastq)[0])[0]
+
+            fastq_size = os.path.getsize(os.path.join(pima_data.ont_fastq, fastq))
+            multiplexed_dirs[name] = barcode_data(
+                        barcode_id = name,
+                        barcode_root_path = pima_data.ont_fastq,
+                        barcode_fastq_list = [fastq],
+                        barcode_fastq_paths = [os.path.join(pima_data.ont_fastq, fastq)],
+                        barcode_size_bytes = fastq_size,
+                        ont_fastq = os.path.join(os.path.join(pima_data.output_dir, name), f"{name}.fastq"))
+            total_dir_size = total_dir_size + fastq_size
+
+    else: 
+        for root, dirs, files in os.walk(pima_data.ont_fastq):
+            if any([re.search(r"fail", dir) for dir in dirs]):
+                print_and_log(
+                    pima_data,
+                    "There are directories with the string 'fail' in the name. We will use both passing and failing reads for each sample. If you wish to use only passing reads, please cancel (ctrl+c) and re-run giving just the fastq_pass directory as input",
+                    pima_data.warning_verbosity,
+                    pima_data.warning_color,
+                )
+
+            if len(files) > 0:
+                if re.search(r"fastq",files[0]) and not re.search(r"unclassified", root):
+                    if os.path.basename(root) in multiplexed_dirs:
+                        dir_size = sum(os.path.getsize(os.path.join(root, f)) for f in files)
+                        multiplexed_dirs[os.path.basename(root)].update_barcode(root, files, [os.path.join(root, f) for f in files], dir_size)
+                        total_dir_size = total_dir_size + dir_size
+
+                    else:
+                        dir_size = sum(os.path.getsize(os.path.join(root, f)) for f in files)
+                        multiplexed_dirs[os.path.basename(root)] = barcode_data(
+                                                    barcode_id = os.path.basename(root),
+                                                    barcode_root_path = root,
+                                                    barcode_fastq_list = files,
+                                                    barcode_fastq_paths = [os.path.join(root, f) for f in files],
+                                                    barcode_size_bytes = dir_size,
+                                                    ont_fastq = os.path.join(pima_data.output_dir, f"{os.path.basename(root)}.fastq"))
+                        total_dir_size = total_dir_size + dir_size
+
+    ignored_barcodes = dict()
+    for barcode in multiplexed_dirs.copy().values():
+        perc_data = barcode.barcode_size_bytes / total_dir_size
+        if perc_data < pima_data.barcode_min_fraction:
+            ignored_barcodes[barcode.barcode_id] = perc_data
+            del multiplexed_dirs[barcode.barcode_id]
+
+    print_and_log(
             pima_data,
-            "Starting Multiplex Analysis",
+            f"Running PiMA on barcodes: {', '.join(multiplexed_dirs.keys())}",
             pima_data.main_process_verbosity,
             pima_data.main_process_color,
+    )
+
+    if len(ignored_barcodes) > 0:
+        message = (
+            "The following barcodes were found in the input directory but were NOT analyzed "
+            f"because they contained less than {pima_data.barcode_min_fraction*100}% (default=0.025 [2.5%]) of the fastq data:\n"
+            "If you need to change the min_fraction, please re-run pima with the following flag '--barcode_min_fraction <fractional value>'\n"
         )
-        
-        multiplexed_dirs = defaultdict()
-        total_dir_size = 0
-
-        if not any(os.path.isdir(os.path.join(pima_data.ont_fastq, item)) for item in os.listdir(pima_data.ont_fastq)) and any([re.search(r"fastq", item) for item in os.listdir(pima_data.ont_fastq)]):
-            #user is providing a directory contains fastq files for each sample (hopefully)
-            for fastq in os.listdir(pima_data.ont_fastq):
-                name = os.path.splitext(os.path.basename(fastq))[0]
-
-                if re.search(r"\.(gz|gzip)$", fastq):
-                    name = os.path.splitext(os.path.splitext(fastq)[0])[0]
-
-                fastq_size = os.path.getsize(os.path.join(pima_data.ont_fastq, fastq))
-                multiplexed_dirs[name] = barcode_data(
-                            barcode_id = name,
-                            barcode_root_path = pima_data.ont_fastq,
-                            barcode_fastq_list = [fastq],
-                            barcode_fastq_paths = [os.path.join(pima_data.ont_fastq, fastq)],
-                            barcode_size_bytes = fastq_size)
-                total_dir_size = total_dir_size + fastq_size
-
-        else: 
-            for root, dirs, files in os.walk(pima_data.ont_fastq):
-                if any([re.search(r"fail", dir) for dir in dirs]):
-                    print_and_log(
-                        pima_data,
-                        "There are directories with the string 'fail' in the name. We will use both passing and failing reads for each sample. If you wish to use only passing reads, please cancel (ctrl+c) and re-run giving just the fastq_pass directory as input",
-                        pima_data.warning_verbosity,
-                        pima_data.warning_color,
-                    )
-
-                if len(files) > 0:
-                    if re.search(r"fastq",files[0]) and not re.search(r"unclassified", root):
-                        if os.path.basename(root) in multiplexed_dirs:
-                            dir_size = sum(os.path.getsize(os.path.join(root, f)) for f in files)
-                            multiplexed_dirs[os.path.basename(root)].update_barcode(root, files, [os.path.join(root, f) for f in files], dir_size)
-                            total_dir_size = total_dir_size + dir_size
-
-                        else:
-                            dir_size = sum(os.path.getsize(os.path.join(root, f)) for f in files)
-                            multiplexed_dirs[os.path.basename(root)] = barcode_data(
-                                                        barcode_id = os.path.basename(root),
-                                                        barcode_root_path = root,
-                                                        barcode_fastq_list = files,
-                                                        barcode_fastq_paths = [os.path.join(root, f) for f in files],
-                                                        barcode_size_bytes = dir_size)
-                            total_dir_size = total_dir_size + dir_size
-
-        #ignored_barcodes = []
-        ignored_barcodes = dict()
-        for barcode in multiplexed_dirs.copy().values():
-            perc_data = barcode.barcode_size_bytes / total_dir_size
-            if perc_data < pima_data.barcode_min_fraction:
-                #ignored_barcodes.append(barcode.barcode_id)
-                ignored_barcodes[barcode.barcode_id] = perc_data
-                del multiplexed_dirs[barcode.barcode_id]
-
+        for k, v in ignored_barcodes.items():
+            message = message + "{:<15} {:>.1%}".format(k, v) + "\n"
         print_and_log(
-                pima_data,
-                f"Running PiMA on barcodes: {', '.join(multiplexed_dirs.keys())}",
-                pima_data.main_process_verbosity,
-                pima_data.main_process_color,
+            pima_data,
+            message,
+            pima_data.warning_verbosity,
+            pima_data.warning_color,
         )
+    pima_data.barcodes = multiplexed_dirs
 
-        if len(ignored_barcodes) > 0:
-            message = (
-                "The following barcodes were found in the input directory but were NOT analyzed "
-                f"because they contained less than {pima_data.barcode_min_fraction*100}% (default=0.025 [2.5%]) of the fastq data:\n"
-                "If you need to change the min_fraction, please re-run pima with the following flag '--barcode_min_fraction <fractional value>'\n"
-            )
-            for k, v in ignored_barcodes.items():
-                message = message + "{:<15} {:>.1%}".format(k, v) + "\n"
-            print_and_log(
+
+def parse_input_sample_sheet(pima_data: PimaData):
+    """
+    Probably need to use the Barcode class similar to identify_multiplexed_fastq_files fx
+    Loop over each row in the sample sheet & set variables
+    Return pima_data.barcodes [ dict of barcode classes ]
+
+    May need to update barcode class to allow for individual parameters (e.g. illumina reads, reference, circos type...)
+    These need to be optionally handed over to nf_template OR to the serial pima command
+    """
+    validate_file_and_size_or_error(pima_data, pima_data.sample_sheet, min_size = 0)
+
+    #all allowed columns
+    mandatory_cols = ["sample_name"] # This gets saved in the data class as "barcode_id"
+    optional_cols = [
+        "ont_fastq", 
+        "illumina_r1", 
+        "illumina_r2", 
+        "genome", 
+        "genome_size", 
+        "reference_organism", 
+        "reference_genome", 
+        "reference_mutation_bed_file",
+        "self_circos",
+        ]
+
+    samples = defaultdict()
+    with open(pima_data.sample_sheet, 'r') as f:
+        reader = csv.DictReader(f, delimiter = '\t')
+        header_columns = reader.fieldnames
+
+        if not set(mandatory_cols).issubset(set(header_columns)):
+            missing_cols = set(mandatory_cols) - set(header_columns)
+            message = (f"Your sample sheet is missing the required column {missing_cols}")
+            error_out(
                 pima_data,
-                message,
-                pima_data.warning_verbosity,
-                pima_data.warning_color,
+                message
             )
-        pima_data.barcodes = multiplexed_dirs
+
+        if not any(data_col in header_columns for data_col in ["ont_fastq", "illumina_r1", "genome"]):
+            message = (f"PiMA needs data to run, please include at least an ont_fastq, illumina_r1, or assembled genome as input")
+            error_out(
+                pima_data,
+                message
+            )
+
+        if all(val in header_columns for val in ["reference_organism", "reference_genome"]) or all(val in header_columns for val in ["reference_organism", "reference_mutation_bed_file"]):
+            message = (f"Please provide either a reference organism ('e.g. Bacillus_anthracis') OR a reference_genome and/or reference_mutation_bed_file. The sample sheet cannot have both")
+            error_out(
+                pima_data,
+                message
+            )       
+    
+        for sample in reader:
+            sample_data = {}
+            for col in mandatory_cols:
+                sample_data['barcode_id'] = sample[col]
+            for col in optional_cols:
+                sample_data[col] = sample.get(col, None)
+            
+            try:
+                cur_samp = barcode_data(**sample_data)
+                cur_samp.from_sample_sheet = True
+
+            except TypeError as e:
+                message = (
+                    f"""Failed to parse input sample sheet, unexpected column name: {str(e).split("'")[1]}\n"""
+                    "Please correct the sample sheet and try again. "
+                    f"The allowed column names are:\n{', '.join([x for x in mandatory_cols and optional_cols])}"
+                )
+                error_out(
+                    pima_data,
+                    message
+                )        
+            samples[cur_samp.barcode_id] = cur_samp
+
+        pima_data.barcodes = samples
 
 
 def initialize_multiplex_analysis(pima_data: PimaData, settings: Settings):
     
-    identify_multiplexed_fastq_files(pima_data)
+    if pima_data.sample_sheet:
+        parse_input_sample_sheet(pima_data)
+
+    else:
+        identify_multiplexed_fastq_files(pima_data)
 
     if pima_data.nextflow or isinstance(pima_data.nextflow, str):
         validate_nextflow(pima_data)
@@ -251,22 +396,41 @@ def initialize_multiplex_analysis(pima_data: PimaData, settings: Settings):
             pima_data.main_process_verbosity,
             pima_data.main_process_color,
         )
-
+        
         stop_logging(pima_data, "Sample specific logs are found in their respective directories, closing multiplex log now.")
 
-        nf_file = os.path.join(pima_data.output_dir, "nf_singplex_inputs.csv")
-        
+        nf_file = os.path.join(pima_data.output_dir, "nf_singleplex_inputs.csv")
+        header = [
+            "sample_name",
+            "output_directory",
+            "ont_fastq",
+            "illumina_fastq",
+            "genome",
+            "genome_size",
+            "reference_organism",
+            "reference_genome",
+            "reference_mutation_bed_file",
+            "self_circos",
+            'original_command',
+        ]
         with open(nf_file, "w") as nf_handle:
+            nf_handle.write(",".join(header) + '\n')
             for barcode in pima_data.barcodes.keys():
-                barcode_pima_data = copy.deepcopy(pima_data)
-                barcode_pima_data.output_dir = os.path.join(pima_data.output_dir, barcode)
-                barcode_pima_data.ont_fastq = os.path.join(pima_data.output_dir, f"{barcode}.fastq")
-                barcode_pima_data.barcodes[barcode].create_concat_fastq(barcode_pima_data, barcode_pima_data.ont_fastq)
+                pima_data.barcodes[barcode].create_concat_fastq(pima_data, pima_data.barcodes[barcode].ont_fastq)
                 updated_cmd = strip_pima_cmd(pima_data, pima_data.run_command)
+                illumina_list = [fastq for fastq in [pima_data.barcodes[barcode].illumina_r1, pima_data.barcodes[barcode].illumina_r2] if fastq]
+                
                 line = (
                     f"{barcode},"
-                    f"{barcode_pima_data.output_dir},"
-                    f"{barcode_pima_data.ont_fastq},"
+                    f"{os.path.join(pima_data.output_dir, barcode)},"
+                    f"{pima_data.barcodes[barcode].ont_fastq or ''},"
+                    f"{' '.join(illumina_list) if len(illumina_list) > 0 else ''},"
+                    f"{pima_data.barcodes[barcode].genome or ''},"
+                    f"{pima_data.barcodes[barcode].genome_size or pima_data.genome_assembly_size},"
+                    f"{pima_data.barcodes[barcode].reference_organism or ''},"
+                    f"{pima_data.barcodes[barcode].reference_genome or ''},"
+                    f"{pima_data.barcodes[barcode].reference_mutation_bed_file or ''}," 
+                    f"{pima_data.barcodes[barcode].self_circos.lower() if pima_data.barcodes[barcode].self_circos else ''},"                     
                     f"{updated_cmd}\n"
                 )
                 nf_handle.write(line)
@@ -300,12 +464,46 @@ def initialize_multiplex_analysis(pima_data: PimaData, settings: Settings):
         for barcode in pima_data.barcodes.keys():
             barcode_pima_data = copy.deepcopy(pima_data)
             barcode_pima_settings = copy.deepcopy(settings)
-            barcode_pima_data.output_dir = os.path.join(barcode_pima_data.output_dir, barcode)
-            barcode_pima_data.logging_file = os.path.join(barcode_pima_data.output_dir, "pima.log")
-            barcode_pima_data.ont_fastq = os.path.join(barcode_pima_data.output_dir, f"{barcode}.fastq")
             barcode_pima_data.multiplexed = None
-            log_message = [("main", f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]', f"{barcode_pima_data.barcodes[barcode].report_multiplex_sample()}")]
-            modules.validate_output_dir(barcode_pima_data, settings, log_message)
+            barcode_pima_data.sample_sheet = None
+
+            barcode_pima_data.analysis_name = barcode
+            barcode_pima_data.output_dir = os.path.join(barcode_pima_data.output_dir, barcode)
+            barcode_pima_data.ont_fastq = pima_data.barcodes[barcode].ont_fastq
+            barcode_pima_data.ont_raw_fastq = barcode_pima_data.ont_fastq
+            barcode_pima_data.illumina_fastq = [fastq for fastq in [pima_data.barcodes[barcode].illumina_r1, pima_data.barcodes[barcode].illumina_r2] if fastq is not None]
+            barcode_pima_data.genome_fasta = pima_data.barcodes[barcode].genome
+            barcode_pima_data.genome_assembly_size = pima_data.barcodes[barcode].genome_size or pima_data.genome_assembly_size
+            barcode_pima_data.organism = pima_data.barcodes[barcode].reference_organism or pima_data.organism
+            barcode_pima_data.reference_fasta = pima_data.barcodes[barcode].reference_genome or pima_data.reference_fasta
+            barcode_pima_data.mutation_region_bed = pima_data.barcodes[barcode].reference_mutation_bed_file or pima_data.mutation_region_bed
+            barcode_pima_data.logging_file = os.path.join(barcode_pima_data.output_dir, "pima.log")
+
+            if pima_data.barcodes[barcode].self_circos is not None and pima_data.barcodes[barcode].self_circos.lower() == "yes":
+                barcode_pima_data.self_circos = True
+
+            #Tell user what options are passed to the singleplex command
+            updated_cmd = strip_pima_cmd(pima_data, pima_data.run_command)
+            settings_from_multiplex = ' '.join([arg for arg in updated_cmd.split(' ') if not re.search("pima",arg)])
+            pima_options = (
+                    f"output_directory: {barcode_pima_data.output_dir}\n"
+                    f"ont-fastq: {barcode_pima_data.ont_fastq or ''}\n"
+                    f"illumina-fastq: {barcode_pima_data.illumina_fastq if len(barcode_pima_data.illumina_fastq) > 0 else ''}\n"
+                    f"genome: {barcode_pima_data.genome_fasta or ''}\n"
+                    f"genome-size: {barcode_pima_data.genome_assembly_size}\n"
+                    f"organism: {barcode_pima_data.organism or ''}\n"
+                    f"reference-genome: {barcode_pima_data.reference_fasta or ''}\n"
+                    f"mutation-regions: {barcode_pima_data.mutation_region_bed or ''}\n" 
+                    f"self-circos: {barcode_pima_data.self_circos or 'No'}\n"                     
+                    f"flags from the original multiplex command: {settings_from_multiplex}"
+                )
+
+            log_messages = [
+                ("main", f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]', f"{barcode_pima_data.barcodes[barcode].report_sample()}"),
+                ("main", f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]', f"Sample inputs to pima:\n{pima_options}"),
+                ]
+            
+            modules.validate_output_dir(barcode_pima_data, settings, log_messages)
             barcode_pima_data.barcodes[barcode].create_concat_fastq(barcode_pima_data)
             Pima.pima.run_workflow(barcode_pima_data, settings)
 
@@ -314,10 +512,8 @@ def strip_pima_cmd(pima_data, system_args: list):
     """
     Regenerate the pima command except singleplex with the specific ONT reads, updated output directory, removed multiplexing/nextflow statements
     """
-    #TODO: How should Illumina data be handled for a multiplexed run??? 
-    #      - Just need to add a sample_sheet mode
 
-    params_to_change = ['--output', '--ont-fastq', '--threads']
+    params_to_change = ['--output', '--ont-fastq', '--threads', '--sample-sheet']
     params_to_remove = ['--multiplexed', '--nextflow']
     if isinstance(pima_data.nextflow, str):
         system_args = re.sub(pima_data.nextflow, "", system_args)
@@ -342,27 +538,7 @@ def validate_nextflow(pima_data):
         return
     if pima_data.no_assembly:
         return
-    if not pima_data.will_have_ont_fastq:
-        error = "Nextflow is only setup for using ont-fastq data, not assemblies"
-        pima_data.errors.append(error)
-        print_and_log(
-            pima_data,
-            error,
-            pima_data.fail_verbosity,
-            pima_data.error_color,
-        )
-        return
-    
-    if pima_data.nextflow and not pima_data.multiplexed:
-        error = "Nextflow is only useful for multiplexed data"
-        pima_data.errors.append(error)
-        print_and_log(
-            pima_data,
-            error,
-            pima_data.fail_verbosity,
-            pima_data.error_color,
-        )
-    
+      
     if validate_utility(
         pima_data, "nextflow", "nextflow is not on the PATH (required by --multiplexed --nextflow)."
     ):

@@ -19,6 +19,7 @@ from Pima.utils.utils import (
     make_finish_file,
     std_files,
     error_out,
+    correct_nextflow_path,
 )
 from Pima.utils.mapping import (
     minimap_and_sort,
@@ -109,7 +110,6 @@ def validate_mutations(pima_data: PimaData):
     # Either from the built in set or given as an argument, make sure the file is there
     pima_data.mutation_region_bed = os.path.realpath(pima_data.mutation_region_bed)
     if validate_file_and_size(pima_data, pima_data.mutation_region_bed, min_size=100):
-        #correct_bed_column_names = ['#contig', 'start', 'stop', 'name', 'type', 'drug', 'note']
         correct_bed_column_names = ['#contig', 'start', 'stop', 'name', 'type', 'drug', 'priority', 'note'] #updated for ardap style reporting
         pima_data.mutation_regions = pd.read_csv(
             pima_data.mutation_region_bed, header=0, sep="\t", index_col=False
@@ -267,7 +267,6 @@ def call_insertions(pima_data: PimaData):
     parse_insertion_results(pima_data)
     make_finish_file(pima_data, pima_data.insertions_dir)
 
-#TODO: Handle large indels that intersect with the mutations file correctly
 def parse_insertion_results(pima_data: PimaData):
     """Read the results from dnadiff and populate the information into the Analysis class & final report"""
     # Figure out the %-identity with the reference sequence
@@ -390,10 +389,10 @@ def parse_insertion_results(pima_data: PimaData):
             contig, size = line.strip().split()
             command = " ".join(
                 [
-                    "grep", 
-                    contig, 
+                    "grep -E", 
+                    f'"^{contig}[[:blank:]]"', 
                     genome_aligned_bed,
-                    "| awk \'BEGIN {sum = 0} {sum+=($3-$2)} END {print sum}\'",
+                    "| awk \'BEGIN {sum = 0; pend=0} {if($2<pend){$2=pend}; sum+=($3-$2); pend=$3} END {print sum}\'",
                 ]
             )
             contig_bases_align = print_and_run(pima_data, command)[0]
@@ -415,10 +414,10 @@ def parse_insertion_results(pima_data: PimaData):
             contig, size = line.strip().split()
             command = " ".join(
                 [
-                    "grep", 
-                    contig, 
+                    "grep -E", 
+                    f'^{contig}\t', 
                     reference_aligned_bed, 
-                    "| awk \'BEGIN {sum = 0} {sum+=($3-$2)} END {print sum}\'",
+                    "| awk \'BEGIN {sum = 0; pend=0} {if($2<pend){$2=pend}; sum+=($3-$2); pend=$3} END {print sum}\'",
                 ]
             )
             contig_bases_align = print_and_run(pima_data, command)[0]
@@ -466,11 +465,14 @@ def parse_insertion_results(pima_data: PimaData):
         )
     # Report the large indels
     ## About 40 get reported / page currently -> will restrict this table to 1 pg if there are a lot of large INDELs
+
+    #When run through nextflow, these paths reflect the workdirs and not the final destination
+    ## We can correct the notes by removing the ../work/<[0-9]{2}>/<hash>/.. portions of the path
     if pima_data.genome_insertions.shape[0] > 40:
         genome_insertions_csv = os.path.join(pima_data.insertions_dir, "query_insertions.csv")
         warning = (f"There are {pima_data.genome_insertions.shape[0]} large (>25 bp) query-based insertions detected. "
                     f"40 longest insertions reported. A complete list can be accessed at: \n"
-                    f"{genome_insertions_csv}"
+                    f"{correct_nextflow_path(genome_insertions_csv)}"
         )
         add_warning(pima_data, warning)
         pima_data.genome_insertions.to_csv(
@@ -485,7 +487,7 @@ def parse_insertion_results(pima_data: PimaData):
         reference_insertions_csv = os.path.join(pima_data.insertions_dir, "reference_insertions.csv")
         warning = (f"There are {pima_data.reference_insertions.shape[0]} large (>25 bp) reference insertions detected. "
                     f"40 longest insertions reported. A complete list can be accessed at: \n"
-                    f"{reference_insertions_csv}"
+                    f"{correct_nextflow_path(reference_insertions_csv)}"
         )
         pima_data.reference_insertions.to_csv(
             reference_insertions_csv, 
@@ -514,44 +516,7 @@ def parse_insertion_results(pima_data: PimaData):
             pima_data, f"Unexpected exception when processing SNPs and small indels from the reference to assembly genome alignment: {e}"
         )
 
-    #TODO: rewrite this to handle the large INDELs & report them correctly
-    ## here the large indels are >25 bp, should I filter the varscan variants so that only <25 indels are reported there?
-    ### handling this with the call_amr_mutations below
-    #### We can't handle large insertions right now!!
-
-    # See if any mutation regions intersect with deletions
-    ## Isn't this superfluous? Read mapping will identify INDELs
-    # if pima_data.mutation_region_bed:
-    #     amr_deletion_bed = os.path.join(pima_data.insertions_dir, 'amr_deletions.bed')
-    #     command = " ".join(
-    #         [
-    #             'bedtools intersect',
-    #             '-nonamecheck',
-    #             '-a', pima_data.mutation_region_bed,
-    #             '-b', reference_insertions_bed,
-    #             '>', 
-    #             amr_deletion_bed,
-    #         ]
-    #     )
-    #     print_and_run(pima_data, command)
-
-    #     # There may be no deletions, let's see
-    #     try:
-    #         pima_data.amr_deletions = pd.read_csv(filepath_or_buffer = amr_deletion_bed, sep = '\t', header = None)
-    #     except FileNotFoundError:
-    #         pima_data.amr_deletions = pd.DataFrame()
-    #     except pd.errors.EmptyDataError:
-    #         pima_data.amr_deletions = pd.DataFrame()
-    #     except Exception as e:
-    #         error_out(
-    #             pima_data, f"Unexpected exception when processing deletions within locations listed in the mutations_regions.bed file: {e}"
-    #         )  
-
-    #     if pima_data.amr_deletions.shape[0] > 0:
-    #         pima_data.amr_deletions.columns = ['contig', 'start', 'stop', 'name', 'type', 'drug', 'note']
-    #         #only report regions within the mutation_bed file that are 'any' or 'large-deletion'
-    #         pima_data.amr_deletions = pima_data.amr_deletions.loc[pima_data.amr_deletions['type'].isin(['large-deletion', 'any']), :]
-    
+    #Large INDELs handled with "call_amr_mutations" function below 
     pima_data.did_call_large_indels = True
 
 def quast_genome(pima_data: PimaData):
@@ -672,7 +637,6 @@ def call_amr_mutations(pima_data: PimaData):
     make_start_file(pima_data, pima_data.mutations_dir)
 
     # Map the reads to the reference sequence
-    ## Do we want to map both ONT & Illumina when they are provided - allows later drawing of coverage profiles
     if pima_data.illumina_fastq:
         reference_mapping_unfilt_illumina_bam = os.path.join(pima_data.mutations_dir, 'reference_mapping_illumina_unfilt.bam')
         pima_data.reference_mapping_illumina_bam = os.path.join(pima_data.mutations_dir, 'reference_mapping_illumina.bam')
@@ -729,9 +693,7 @@ def call_amr_mutations(pima_data: PimaData):
 
     ##rplV calling has issues due to repetitive regions where the INDELs occur 
     ##     - true variants are often at a lower percentage of population (< 30%)
-    ## ONT data is actually better at calling these long-non-homopolymer mutations than illumina in these cases
-    ## For now, will enable indel calling with ONT-only & filter by INDEL type
-    ### I don't know how this is reported when both ONT & Illumina data are provided? I suspect only Illumina data are used!!
+    ### Currently, when ONT and Illumina data are provided, only Illumina results are shown
 
     # Now call and filter variants with Varscan and filter
     varscan_raw_prefix = os.path.join(pima_data.mutations_dir, 'varscan_raw')
@@ -772,7 +734,6 @@ def call_amr_mutations(pima_data: PimaData):
     verified_large_dels = intersect_dnadiff_large_dels(pima_data)
 
     #combine the two datasets
-    ## Bug where variants in the "any" var_type get collapsed since they have the same start/stop, added 'loc' for the specific, but might not work? 
     merged_hits = pd.concat([verified_hits, verified_large_dels]).drop_duplicates(subset=['GE', 'start', 'stop', 'loc'], keep='first')
     merged_hits = pd.concat([verified_hits, verified_large_dels])
     merged_hits_tsv = os.path.join(pima_data.mutations_dir, "intersect_amr-regions_variants_deletions.tsv")
@@ -823,9 +784,11 @@ def intersect_variants_with_mutations(pima_data: PimaData):
     return verified_hits
 
 def intersect_dnadiff_large_dels(pima_data: PimaData):
-    ##check if dnadiff-based large deletions intersect our mutations bed file
-    ### We can't pull out the insertions due to how the genome alignments are saved, would need to rework that section
-    ### our >25bp deletions
+    ##check if dnadiff-based large deletions intersect our mutations bed file   
+    ## if genome not assembled, there will be no insertions
+    if not pima_data.will_have_genome_fasta:
+        return
+        
     reference_insertions_bed = os.path.join(pima_data.insertions_dir, 'reference_insertions.bed')
     command = " ".join(
         [
@@ -896,10 +859,6 @@ def filter_varscan(pima_data: PimaData, in_prefix: str, out_prefix: str, var_typ
     varscan_raw_var = ''.join([in_prefix, '.',var_type])
     varscan_var = ''.join([out_prefix, '.', var_type])
     
-    ## Add in that ONT detection for homopolymers is allowed if R10 data is used
-    ### Changing the logic, lets call all mutations the same way, and change how we report them. Knowledgeable users can inspect these intermediate files
-    ## Use this statement for all Illumina sets, and the ONT SNP mode, and R10_sup basecalled data
-    #if (read_type == "Illumina") or (var_type == "snp") or (re.search(r"r1041.*sup.*", pima_data.ont_model)):
     command = " ".join(
         [
             'awk \'(NR > 1 && $9 == 2 && $5 + $6 >= 15)',
@@ -915,20 +874,6 @@ def filter_varscan(pima_data: PimaData, in_prefix: str, out_prefix: str, var_typ
         ## Formula is: 1 / (ln(length+2) / ln(10)) + 0.2
         ## This formula converges on 20% (x -> inf, y -> 0.2); drops from 0.6 -> 0.3 by length=10
 
-    # only use long-non homopolymer INDELs if ONT is used
-    # elif (read_type == "ONT") and (var_type == "indel"):
-    #     ## add the statement that the sequence cannot be a repetition of the same letter (avoid homopolymers)
-    #     ## also required the INDEL to be at least 6 bp long (length(s) > 5)
-    #     command = " ".join(
-    #         [
-    #             'awk \'(NR > 1 && $9 == 2 && $5 + $6 >= 15)',
-    #             '{OFS = "\\t";f = $6 / ($5 + $6); gsub(/.*\\//, "", $4);s = $4;gsub(/[+\\-]/, "", s);$7 = sprintf("%.2f%%", f * 100);',
-    #             'min = 1 / log(length(s) + 2) / log(10) + 2/10;if(f > min && length(s) > 5 && s~"[^"substr(s,1,1)"]"){print}}\'',
-    #             varscan_raw_var,
-    #             '1>' + varscan_var, 
-    #             '2>' + varscan_var,
-    #         ]
-    #     )
     print_and_run(pima_data, command)
     validate_file_and_size_or_error(
         pima_data, varscan_var, 

@@ -12,18 +12,7 @@ from Pima import modules
 
 mpl.use("Agg")
 
-def run_prechecks(pima_data: PimaData, settings: Settings, pima_cmdtext: str):
-    print_and_log(
-        pima_data,
-        "STARTING VALIDATION STEPS",
-        pima_data.main_process_verbosity,
-        pima_data.main_process_color,
-    )
-    modules.validate_download(pima_data, settings)
-    modules.validate_output_dir(pima_data, settings, pima_cmdtext)
-    modules.validate_organism(pima_data)
-    modules.validate_multiplex_fastq(pima_data)
-
+def check_for_errors(pima_data: PimaData):
     if len(pima_data.errors) > 0:
         print_and_log(
             pima_data,
@@ -46,7 +35,21 @@ def run_prechecks(pima_data: PimaData, settings: Settings, pima_cmdtext: str):
         )
         sys.exit(1)
 
+def run_prechecks(pima_data: PimaData, settings: Settings, pima_cmdtext: str):
+    print_and_log(
+        pima_data,
+        "STARTING VALIDATION STEPS",
+        pima_data.main_process_verbosity,
+        pima_data.main_process_color,
+    )
+    modules.validate_download(pima_data, settings)
+    modules.validate_output_dir(pima_data, settings, pima_cmdtext)
+    modules.validate_multiplex_fastq(pima_data)
+    check_for_errors(pima_data)
+
+
 def run_validation(pima_data: PimaData, settings: Settings):
+    modules.validate_organism(pima_data, settings)
     modules.validate_ont_fastq(pima_data, settings)
     modules.validate_illumina_fastq(pima_data)
     modules.validate_genome_fasta(pima_data)
@@ -57,38 +60,17 @@ def run_validation(pima_data: PimaData, settings: Settings):
     modules.validate_medaka(pima_data)
     modules.validate_illumina_polish(pima_data)
     modules.validate_evaluate_assembly(pima_data)
-    modules.validate_plasmids(pima_data, settings)
     modules.validate_features(pima_data, settings)
-    modules.validate_blast(pima_data)
+    modules.validate_blast(pima_data, settings)
     modules.validate_reference_fasta(pima_data)
     modules.validate_quast(pima_data)
     modules.validate_mutations(pima_data)
+    modules.validate_plasmids(pima_data, settings)
     modules.validate_draw_features(pima_data)
     modules.validate_draw_amr_matrix(pima_data)
     modules.validate_draw_circos(pima_data, settings)
     modules.validate_make_report(pima_data, settings)
-
-    if len(pima_data.errors) > 0:
-        print_and_log(
-            pima_data,
-            "Errors were found during validation.",
-            pima_data.fail_verbosity,
-            pima_data.error_color,
-        )
-        for error in pima_data.errors:
-            print_and_log(
-                pima_data,
-                error,
-                pima_data.fail_verbosity,
-                pima_data.error_color,
-            )
-        print_and_log(
-            pima_data,
-            "Aborting.",
-            pima_data.fail_verbosity,
-            pima_data.error_color,
-        )
-        sys.exit(1)
+    check_for_errors(pima_data)
 
     #log all the versions
     version_log = "Utility versions:"
@@ -148,7 +130,8 @@ def main():
 
     # Start the analysis
     pima_data = PimaData(opts, unknown_args)
-
+    check_for_errors(pima_data)
+    
     # Capture commandline options used
     pima_data.run_command = ' '.join(sys.argv)
     run_prechecks(pima_data, settings, [f"PiMA command used: {' '.join(sys.argv)}"])

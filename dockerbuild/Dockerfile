@@ -1,6 +1,6 @@
 FROM mambaorg/micromamba:1.5.8 as app
 
-ARG PIMA_VER="2.1.1"
+ARG PIMA_VER="2.1.4"
 
 # 'LABEL' instructions tag the image with metadata that might be important to the user
 LABEL base.image="mambaorg/micromamba:1.5.8"
@@ -14,9 +14,9 @@ LABEL maintainer.email="woverholt@asrtinc.com"
 USER root
 
 ## Need to build the file from the primary pima dir
-# cd ....pima
+# cd /home/waoverholt/programs/CDC-pima
 # docker build -t local/pima:2.1.0 -f dockerbuild/Dockerfile .
-# cd ....singularity_images
+# cd ~/programs/singularity_images
 # apptainer build pima2.1.0.sif docker-daemon://local/pima:2.1.0
 
 # include required pima files

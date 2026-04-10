@@ -5,6 +5,7 @@ from Pima.pima_data import PimaData
 from Pima.utils.utils import (
     print_and_run,
     print_and_log,
+    add_warning,
 )
 
 def validate_evaluate_assembly(pima_data: PimaData) :
@@ -41,15 +42,11 @@ def check_for_small_contigs_and_fragmentation(pima_data: PimaData):
     # Take a look at the number of contigs, their sizes, and circularity.  Warn if things don't look good
     if assembly_info.shape[0] > 4:
         warning = f"Assembly produced {assembly_info.shape[0]} contigs, more than ususally expected; assembly may be fragmented."
-        print_and_log(
-            pima_data, warning, pima_data.warning_verbosity, pima_data.warning_color
-        )
+        add_warning(pima_data, warning)
         pima_data.assembly_notes = pd.concat([pima_data.assembly_notes, pd.Series(warning, dtype='object')])
     small_contigs = assembly_info.loc[assembly_info["length"] <= 3000, :]
 
     if small_contigs.shape[0] > 0:
         warning = f"Assembly produced {small_contigs.shape[0]} small contigs ({', '.join(small_contigs['contig'])}); assembly may include spurious sequences."
-        print_and_log(
-            pima_data, warning, pima_data.warning_verbosity, pima_data.warning_color
-        )
+        add_warning(pima_data, warning)
         pima_data.assembly_notes = pd.concat([pima_data.assembly_notes, pd.Series(warning, dtype='object')])

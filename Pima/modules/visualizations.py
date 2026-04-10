@@ -216,12 +216,10 @@ def draw_amr_matrix(pima_data: PimaData):
     snp_df = pd.DataFrame(columns =['gene', 'drug'])
     indel_df = pd.DataFrame(columns =['gene', 'drug'])
 
-    if not pima_data.did_call_mutations:
-        return
-
-    if pima_data.amr_mutations.shape[0] > 0:
+    #NEED to check if this works
+    if pima_data.did_call_mutations and pima_data.amr_mutations.shape[0] > 0:
         mutations = pima_data.amr_mutations.copy(deep=True)
-        ## Duplicated from the MarkdownReport.py script, probably should consolidate into compare_to_ref, but wanted to keep all the data in the pima_data object for now
+        ## Duplicated from the report.py PimaReport class, probably should consolidate into compare_to_ref, but wanted to keep all the data in the pima_data object for now
         #restrict to only known mutations if the input genome is too far from the reference genome
         if pima_data.reference_identity < pima_data.reference_identity_min and pima_data.reference_identity != 0:
             mutations = mutations.query('classification_type == "confirmed_location"')
@@ -249,19 +247,29 @@ def draw_amr_matrix(pima_data: PimaData):
         indel_df = indel_df[["gene", "GE", "loc", "amr_class"]]
         indel_df = indel_df.set_axis(column_names, axis=1)
 
-    #Build matrix
-    amr_to_draw = pd.concat([
-        amr_df[['gene', 'drug']],
-        snp_df[['gene', 'drug']],
-        indel_df[['gene', 'drug']],
-    ])
-    amr_to_draw.to_csv(
-        os.path.join(
-            pima_data.mutations_dir, 
-            "amr_mutations_to_draw.csv",
-        ), 
-        index = False, 
-    )
+        #Build matrix
+        amr_to_draw = pd.concat([
+            amr_df[['gene', 'drug']],
+            snp_df[['gene', 'drug']],
+            indel_df[['gene', 'drug']],
+        ])
+        amr_to_draw.to_csv(
+            os.path.join(
+                pima_data.mutations_dir, 
+                "amr_mutations_to_draw.csv",
+            ), 
+            index = False, 
+        )
+    elif pima_data.did_blast_feature_sets and amr_df.shape[0] > 0:
+        #Build matrix
+        amr_to_draw = amr_df[['gene', 'drug']]
+        amr_to_draw.to_csv(
+            os.path.join(
+                pima_data.drawing_dir, 
+                "amr_mutations_to_draw.csv",
+            ), 
+            index = False, 
+        )
     # If there are no AMR hits, we can't draw the matrix
     if amr_to_draw.shape[0] < 1:
         return
@@ -442,7 +450,7 @@ def draw_circos(pima_data: PimaData, settings: Settings):
                 ont_reference_coverage_fp, 
                 pima_data.circos_dir)
 
-        if pima_data.illumina_fastq: #We have the illumina mapped data already
+        if pima_data.illumina_fastq and pima_data.mutation_region_bed: #We have the illumina mapped data already
             pima_data.reference_mapping_illumina_bam = os.path.join(pima_data.mutations_dir, 'reference_mapping_illumina_unfilt.bam')
             illumina_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'illumina_ref_mapping_unfilt.mpileup')
             mpileup_bam(
@@ -453,6 +461,27 @@ def draw_circos(pima_data: PimaData, settings: Settings):
                 pima_data.circos_dir
             )
 
+        elif pima_data.illumina_fastq and not pima_data.mutation_region_bed: #We don't have the Illumina data mapped
+                pima_data.reference_mapping_illumina_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina_unfiltered.bam')
+                minimap_and_sort(
+                    pima_data,
+                    pima_data.reference_fasta,
+                    pima_data.reference_mapping_illumina_bam,
+                    pima_data.illumina_fastq,
+                    ont = False,
+                )
+            
+                # Make an mpileup file out of the reads
+                reference_mapping_mpileup = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina.mpileup')
+                mpileup_bam(
+                    pima_data,
+                    pima_data.reference_fasta,
+                    pima_data.reference_mapping_illumina_bam, 
+                    reference_mapping_mpileup, 
+                    pima_data.circos_dir
+                )
+                illumina_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina.mpileup')
+
     else: #standard path, use reference genome
         # Use the reference.sizes file to guide the cicros build
         reference_sizes_fp = os.path.join(pima_data.insertions_dir, 'reference.sizes')
@@ -461,7 +490,52 @@ def draw_circos(pima_data: PimaData, settings: Settings):
         # if no mutation_regions.bed file provided a mutations_dir is not created and we do not have coverage data
         # however, if a reference genome was provided we can still draw the circos plots
         if not pima_data.mutation_region_bed:
-            if pima_data.illumina_fastq:
+            #have both files, but ONT has not been mapped to the reference yet
+            if pima_data.ont_fastq and pima_data.illumina_fastq:
+                #Illumina
+                pima_data.reference_mapping_illumina_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina_unfiltered.bam')
+                minimap_and_sort(
+                    pima_data,
+                    pima_data.reference_fasta,
+                    pima_data.reference_mapping_illumina_bam,
+                    pima_data.illumina_fastq,
+                    ont = False,
+                )
+            
+                # Make an mpileup file out of the reads
+                reference_mapping_mpileup = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina.mpileup')
+                mpileup_bam(
+                    pima_data,
+                    pima_data.reference_fasta,
+                    pima_data.reference_mapping_illumina_bam, 
+                    reference_mapping_mpileup, 
+                    pima_data.circos_dir
+                )
+                illumina_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina.mpileup') 
+
+                #ONT
+                pima_data.reference_mapping_ont_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.bam')
+                minimap_and_sort(
+                    pima_data,
+                    pima_data.reference_fasta, 
+                    pima_data.reference_mapping_ont_bam,
+                    pima_data.ont_fastq, 
+                    ont = True,
+                )
+
+                # Make an mpileup file out of the reads
+                reference_mapping_mpileup = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')
+                mpileup_bam(
+                    pima_data,
+                    pima_data.reference_fasta, 
+                    pima_data.reference_mapping_ont_bam, 
+                    reference_mapping_mpileup, 
+                    pima_data.circos_dir,
+                )
+                ont_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')
+            
+            #Illumina only                               
+            elif pima_data.illumina_fastq:
                 #We want to use the unfiltered bam file to prevent apparent coverage gaps due to repeats
                 pima_data.reference_mapping_illumina_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina_unfiltered.bam')
                 minimap_and_sort(
@@ -483,7 +557,8 @@ def draw_circos(pima_data: PimaData, settings: Settings):
                 )
                 illumina_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina.mpileup')
 
-            elif pima_data.ont_fastq: #We'll generate the ONT mapping information during the circos step to build the coverage, but not to call mutations
+            #ONT only - but didn't already map to reference genome because no mutation file provided
+            elif pima_data.ont_fastq:
                 pima_data.reference_mapping_ont_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.bam')
                 minimap_and_sort(
                     pima_data,
@@ -504,39 +579,13 @@ def draw_circos(pima_data: PimaData, settings: Settings):
                 )
                 ont_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')
         
+        #Have mutation file -> so ONT-only reads have been mapped to call variants
         else:
-            ## ONT READS
-            # if we have coverage data from ONT fastq reads, and we called amr mutations we can add coverage 
-            if pima_data.will_have_ont_fastq and pima_data.reference_identity >= pima_data.reference_identity_min:
-                ont_reference_coverage_fp = os.path.join(pima_data.mutations_dir, 'reference_mapping_ont.mpileup')
-
-            # genome is too divergent from reference to call mutations, but still above 95%, so we can map
-            elif pima_data.will_have_ont_fastq and (95.0 <= pima_data.reference_identity <= pima_data.reference_identity_min):
-                pima_data.reference_mapping_ont_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.bam')
-                minimap_and_sort(
-                    pima_data,
-                    pima_data.reference_fasta, 
-                    pima_data.reference_mapping_ont_bam,
-                    pima_data.ont_fastq, 
-                    ont = True,
-                )
-
-                # Make an mpileup file out of the reads
-                reference_mapping_mpileup = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')
-                mpileup_bam(
-                    pima_data,
-                    pima_data.reference_fasta, 
-                    pima_data.reference_mapping_ont_bam, 
-                    reference_mapping_mpileup, 
-                    pima_data.circos_dir,
-                )
-                ont_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')
-
             ## ILLUMINA READS
             # Illumina reads used to call mutations if within the minimum perc identity
             ## however, if we did this then we didn't use the ONT reads to call mutations, so we'll need to do so
             ### Need to use the unfiltered bam file for the coverage plot so repeat regions don't look like missing data
-            if pima_data.illumina_fastq is not None and pima_data.reference_identity >= pima_data.reference_identity_min:
+            if pima_data.illumina_fastq and pima_data.reference_identity >= pima_data.reference_identity_min:
                 illumina_unfiltered_bam = os.path.join(pima_data.mutations_dir, 'reference_mapping_illumina_unfilt.bam')
                 illumina_reference_coverage_fp = os.path.join(pima_data.mutations_dir, 'reference_mapping_illumina_unfilt.mpileup')
                 mpileup_bam(
@@ -566,7 +615,56 @@ def draw_circos(pima_data: PimaData, settings: Settings):
                     output_dir = pima_data.circos_dir,
                 )
                 pima_data.files_to_clean.extend(illumina_unfiltered_bam)
-                pima_data.files_to_clean.append(reference_mapping_mpileup)
+                pima_data.files_to_clean.append(reference_mapping_mpileup)            
+            
+            ## ONT READS
+            ## didn't call variants so now need to map coverage to reference genome, handled the illumina cov in above statement
+            if pima_data.will_have_ont_fastq and pima_data.illumina_fastq:
+                pima_data.reference_mapping_ont_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.bam')
+                minimap_and_sort(
+                    pima_data,
+                    pima_data.reference_fasta, 
+                    pima_data.reference_mapping_ont_bam,
+                    pima_data.ont_fastq, 
+                    ont = True,
+                )
+
+                # Make an mpileup file out of the reads
+                reference_mapping_mpileup = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')
+                mpileup_bam(
+                    pima_data,
+                    pima_data.reference_fasta, 
+                    pima_data.reference_mapping_ont_bam, 
+                    reference_mapping_mpileup, 
+                    pima_data.circos_dir,
+                )
+                ont_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')       
+
+            # if we have coverage data from ONT fastq reads, and we called amr mutations we can add coverage 
+            elif pima_data.will_have_ont_fastq and pima_data.reference_identity >= pima_data.reference_identity_min:
+                ont_reference_coverage_fp = os.path.join(pima_data.mutations_dir, 'reference_mapping_ont.mpileup')
+
+            # genome is too divergent from reference to call mutations or we only used the illumina data, but still above 95%, so we can map
+            elif pima_data.will_have_ont_fastq and (95.0 <= pima_data.reference_identity <= pima_data.reference_identity_min):
+                pima_data.reference_mapping_ont_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.bam')
+                minimap_and_sort(
+                    pima_data,
+                    pima_data.reference_fasta, 
+                    pima_data.reference_mapping_ont_bam,
+                    pima_data.ont_fastq, 
+                    ont = True,
+                )
+
+                # Make an mpileup file out of the reads
+                reference_mapping_mpileup = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')
+                mpileup_bam(
+                    pima_data,
+                    pima_data.reference_fasta, 
+                    pima_data.reference_mapping_ont_bam, 
+                    reference_mapping_mpileup, 
+                    pima_data.circos_dir,
+                )
+                ont_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_ont.mpileup')
 
     # Draw one circos plot for each of the contigs in the reference sequence
     with open(reference_sizes_fp, "r") as fin:

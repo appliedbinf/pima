@@ -15,7 +15,6 @@ from Pima.utils.utils import (
     find_checkpoint,
     make_start_file,
     make_finish_file,
-    make_report_info_file,
     std_files,
 )
 from Pima.utils.mapping import (
@@ -113,6 +112,7 @@ def polypolish_assembly(pima_data: PimaData):
             pima_data.sub_process_color,
         )
         pima_data.did_polypolish_ont_assembly = True
+        pima_data.did_illumina_polishing = True
         pima_data.files_to_clean.extend(
             list(pathlib.Path(pima_data.illumina_polish_dir).glob("*.bam"))
         )
@@ -221,6 +221,7 @@ def polypolish_assembly(pima_data: PimaData):
     pima_data.files_to_clean.append(polished_fasta)
     make_finish_file(pima_data, pima_data.illumina_polish_dir)
     pima_data.did_polypolyish_ont_assembly = True #track for the report
+    pima_data.did_illumina_polishing = True # track illumina polishing in general regardless of polisher used
 
 def pilon_assembly(pima_data: PimaData):
     print_and_log(
@@ -245,6 +246,7 @@ def pilon_assembly(pima_data: PimaData):
             pima_data.main_process_color,
         )
         pima_data.did_pilon_ont_assembly = True
+        pima_data.did_illumina_polishing = True
         return
 
     os.makedirs(pima_data.illumina_polish_dir)
@@ -333,4 +335,5 @@ def pilon_assembly(pima_data: PimaData):
                                             'cannot be found after fixing names', 'is empty')
     pima_data.load_genome()
     pima_data.did_pilon_ont_assembly = True
+    pima_data.did_illumina_polishing = True
     make_finish_file(pima_data, pima_data.illumina_polish_dir)

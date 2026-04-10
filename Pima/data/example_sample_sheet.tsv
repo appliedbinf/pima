@@ -1,0 +1,7 @@
+#Only "sample_name" is required
+#At least 1 of ont_fastq, illumina_r1/illumina_r2, or genome is required
+#All others are optional and the sample value can either be empty/blank (empty cell) or the column can be omitted
+#reference_organism is mutually exclusive with reference_genome and/or reference_mutation_bed_file
+#In the example below values between <> must be replaced / removed. The <empty> values represent no data, not the string "<empty>"
+sample_name	ont_fastq	illumina_r1	illumina_r2	genome	genome_size	reference_organism	reference_genome	reference_mutation_bed_file	self_circos
+sample1	<PATH>/Sterne-CLR1-2.fastq	<PATH>/Sterne-CLR1-2B_R1.fastq.gz	<PATH>/Sterne-CLR1-2B_R2.fastq.gz	<PATH>/genome_assembly.fasta	5m	Bacillus_anthracis	<empty>	<empty>	yes

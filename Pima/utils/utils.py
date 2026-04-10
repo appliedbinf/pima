@@ -5,7 +5,7 @@ import datetime
 import shutil
 import subprocess
 from pathlib import Path
-
+import hashlib
 import numpy as np
 
 from Pima.pima_data import PimaData
@@ -261,12 +261,6 @@ def make_finish_file(pima_data: PimaData, a_dir: str):
     touch_file(pima_data, finish_file)
 
 
-def make_report_info_file(pima_data: PimaData, a_dir: str):
-    report_info_file = os.path.join(a_dir, ".report_info")
-    touch_file(pima_data, report_info_file)
-    return report_info_file
-
-
 def clean_up(pima_data: PimaData):
 
     print_and_log(
@@ -295,3 +289,33 @@ def clean_up(pima_data: PimaData):
                         os.remove(file)
                     except OSError:
                         continue
+
+
+def calc_md5(pima_data: PimaData, file_path, chunk_size=1024):
+    m = hashlib.md5()
+    try:
+        with open(file_path, 'rb') as f:
+            while chunk := f.read(chunk_size):
+                m.update(chunk)
+    except IOError as e:
+        pima_data.errors.append(
+            f"Error opening or reading file: {e}"
+        )
+        return None
+    return m.hexdigest()
+
+def correct_nextflow_path(path_string):
+
+    path_obj = Path(path_string)
+    path_parts = list(path_obj.parts)
+
+    try:
+        work_index = path_parts.index('work')
+    except ValueError:
+        return path_string
+
+    if work_index >= len(path_parts) - 2:
+        return path_string
+
+    new_path_list = path_parts[:work_index] + path_parts[work_index + 3:]
+    return str(Path(*new_path_list))

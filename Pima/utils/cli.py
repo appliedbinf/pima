@@ -33,9 +33,28 @@ def parse_args(settings: Settings):
         help="Print the software version.",
         version=f"PIMA microbial genome analysis pipeline (version {settings.pima_version})",
     )
+    
+    # Database/download options
+    download_group = parser.add_argument_group("Database downloading arguments")
+    download_group.add_argument(
+        "--download",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Attempt to download Kraken/Plasmid databases if not found locally."
+        + " Use without other options.",
+    )
 
+    download_group.add_argument(
+        "--example-sample-sheet",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Print an example sample sheet that can be used with pima. "
+        + "Use without other options.",
+    )
     # Input arguments
-    input_group = parser.add_argument_group("Input and basecalilng options")
+    input_group = parser.add_argument_group("Input options")
 
     input_group.add_argument(
         "--ont-model",
@@ -49,7 +68,13 @@ def parse_args(settings: Settings):
         required=False,
         default=None,
         metavar="<FASTQ|GZ>, fastq_pass",
-        help="File containing basecalled ONT reads (fastq|gz), or folder containing directories of demultiplexed basecalled reads (fastq_pass)",
+        help="File containing basecalled ONT reads (fastq|gz), or folder containing all fastq|gz reads from a single sample (e.g. barcode01), or with the --multiplexed flag and a folder containing directories of demultiplexed basecalled reads (e.g. fastq_pass)",
+    )
+    input_group.add_argument(
+        "--sample-sheet",
+        required=False,
+        default=None,
+        help="Tab separated file used for running multiple samples. To see an example, re-run pima as 'pima --example-sample-sheet'",
     )
     input_group.add_argument(
         "--multiplexed",
@@ -73,14 +98,7 @@ def parse_args(settings: Settings):
         default=0.025,
         type=float,
         metavar="",
-        help="The minimum fraction of data necessary to include a barcode in the analysis (default : %(default)s)",
-    )
-    input_group.add_argument(
-        "--contamination",
-        required=False,
-        default=False,
-        action="store_true",
-        help="Use Kraken2 to look for contamination in the input read (default : %(default)s)",
+        help="When running as 'multiplexed', the minimum fraction of data necessary to include a barcode in the analysis (default : %(default)s)",
     )
     input_group.add_argument(
         "--illumina-fastq",
@@ -129,7 +147,7 @@ def parse_args(settings: Settings):
         default="flye",
         type=str,
         choices=["flye", "flye_sup", "raven"],
-        help="Assembler to use. Choose 'flye_sup' if you are providing R10 fastq data base called with a super_accuracy model and wish to use flye (default : %(default)s)",
+        help="Assembler to use. 'flye_sup' will be automatically selected if pima detects R10 fastq data base called with a super_accuracy model and wish to use flye. (default : %(default)s)",
     )
     assembly_group.add_argument(
         "--genome-size",
@@ -157,9 +175,8 @@ def parse_args(settings: Settings):
     assembly_group.add_argument(
         "--illumina-polisher",
         required=False,
-        default="pilon",
         choices=["pilon", "polypolish", "skip"],
-        help="Polish the genome assembly using short-reads, to skip use '--illumina-polisher skip' (default : %(default)s)",
+        help="Polish the genome assembly using short-reads, to skip use '--illumina-polisher skip' (default : pilon for ONT assemblies or user provided assemblies, skip if illumina fastq data)",
     )
     assembly_group.add_argument(
         "--only-assemble",
@@ -174,17 +191,6 @@ def parse_args(settings: Settings):
         default=False,
         action="store_true",
         help="Don't attempt to assembly/polish a given genome/set of reads (default : %(default)s)",
-    )
-
-    # Database/download options
-    download_group = parser.add_argument_group("Database downloading arguments")
-    download_group.add_argument(
-        "--download",
-        required=False,
-        default=False,
-        action="store_true",
-        help="Attempt to download Kraken/Plasmid databases if not found locally."
-        + "Use witout other options.",
     )
 
     # Plasmid options
@@ -203,7 +209,16 @@ def parse_args(settings: Settings):
         metavar="<PLASMID_FASTA>",
         help="Path to a FASTA file with reference plasmid sequences",
     )
-    ##add mob_suite (recommended by Gulvik) - https://github.com/phac-nml/mob-suite
+
+    # Check for potential contamination
+    contamination_group = parser.add_argument_group("Contamination check options")
+    contamination_group.add_argument(
+        "--contamination",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Use Kraken2 to look for contamination in the input read (default : %(default)s)",
+    )
 
     # AMR gene options
     amr_group = parser.add_argument_group("AMR gene search options")
@@ -270,13 +285,6 @@ def parse_args(settings: Settings):
     # Options for comparing to a reference genome
     reference_group = parser.add_argument_group("Reference options")
     reference_group.add_argument(
-        "--reference-dir",
-        required=False,
-        default=settings.reference_dir_default,
-        metavar="<REFERNCE_DIR>",
-        help="Directory containing refrence organisms (default : %(default)s)",
-    )
-    reference_group.add_argument(
         "--organism",
         required=False,
         default=None,
@@ -331,7 +339,7 @@ def parse_args(settings: Settings):
         type=int,
         default=1,
         metavar="<INT>",
-        help="How much information to print as PiMA runs (default : %(default)s)",
+        help="How much information to print as PiMA runs. 1=least and 3=most (default : %(default)s)",
     )
     other_group.add_argument(
         "--logfile",
@@ -346,14 +354,6 @@ def parse_args(settings: Settings):
         required=False,
         action="store_true",
         help="Restart pipeline from last completed step (default : %(default)s)",
-    )
-    other_group.add_argument(
-        "--bundle",
-        required=False,
-        type=str,
-        default=None,
-        metavar="<PATH>",
-        help="Local Tectonic bundle (default : %(default)s)",
     )
     other_group.add_argument(
         "--fake-run",
@@ -372,6 +372,14 @@ def parse_args(settings: Settings):
         print(Colors.HEADER)
         parser.print_help()
         print(Colors.ENDC)
+        sys.exit(0)
+
+    if opts.example_sample_sheet:
+        print("Required columns: sample_name")
+        print("Optional columns: ont_fastq\tillumina_r1\tillumina_r2\tgenome\tgenome_size\treference_organism\treference_genome\treference_mutation_bed_file\tself_circos")
+        print("Options specified in the sample_sheet will be prioritized over those specified as commandline arguments")
+        print("Additional arguments can be set from the commandline and will be applied to every sample (e.g. --no-assembly, --illumina-polisher, --skip-medaka)")
+        print(f"An example can be found here: {os.path.join(settings.data_dir, 'example_sample_sheet.tsv')}")
         sys.exit(0)
 
     return opts, unknown_args

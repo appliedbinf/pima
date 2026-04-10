@@ -61,48 +61,108 @@ def call_plasmids(pima_data: PimaData, settings: Settings):
         pima_data.main_process_color,
     )
 
-    if not validate_file_and_size(pima_data, pima_data.plasmid_database) and validate_file_and_size(pima_data, settings.DockerPathPlasmid):
-        pima_data.plasmid_database = settings.DockerPathPlasmid
-
     # Make a directory for plasmid stuff
     pima_data.plasmid_dir = os.path.join(pima_data.output_dir, 'plasmids')
+    
+    #Checkpoint
     if find_checkpoint(pima_data, pima_data.plasmid_dir):
+        pima_data.did_call_plasmids = True
+        pima_data.plasmid_tsv = os.path.join(pima_data.plasmid_dir, 'plasmids.tsv')
+        try:
+            pima_data.plasmids = pd.read_csv(filepath_or_buffer = pima_data.plasmid_tsv, sep = '\t', header = 0)
+        except:
+            pima_data.plasmids = None  
+        
+        #Retrieve notes
+        smaller_contigs_fasta = os.path.join(pima_data.plasmid_dir, 'small_contigs.fasta')
+        small_contigs = pima_data.load_fasta(smaller_contigs_fasta)
+        align_stats = pima_data.query_alignment_stats.copy(deep=True)
+        align_stats['Size (bp)'] = pd.to_numeric(align_stats['Size (bp)'])
+        smaller_contigs = align_stats[(align_stats['Size (bp)'] < 500000.) & (align_stats['Perc Align'] < 75.)]['Contig'].to_list()
+        if len(smaller_contigs) == 0 and pima_data.reference_fasta:
+            message = 'No contigs smaller than 500kb that do not align to the reference provided found, skipping plasmid search'
+            pima_data.plasmid_notes = pd.concat([pima_data.plasmid_notes, pd.Series(message, dtype='object')])        
+        elif len(small_contigs) == 0:
+            message = 'No contigs smaller than 500kb found, skipping plasmid search'
+            pima_data.plasmid_notes = pd.concat([pima_data.plasmid_notes, pd.Series(message, dtype='object')])
+        elif pima_data.plasmids is None:
+            message = 'No small contigs matched plasmids within the database after excluding pX01 and pX02'
+            pima_data.plasmid_notes = pd.concat([pima_data.plasmid_notes, pd.Series(message, dtype='object')])
         return
+    
     os.makedirs(pima_data.plasmid_dir)
     make_start_file(pima_data, pima_data.plasmid_dir)
 
-    # Take very large things out of the assembly.  They aren't plasmids and take a long time to run
-    print_and_log(
-        pima_data,
-        'Finding contigs < 500000 bp', 
-        pima_data.sub_process_verbosity, 
-        pima_data.sub_process_color,
-    )
-    smaller_contigs_fasta = os.path.join(pima_data.plasmid_dir, 'small_contigs.fasta')
-    command = " ".join(
-        [
-            'faidx -i chromsizes', 
-            pima_data.genome_fasta,
-            '| awk \'($2 <= 500000){print $1}\'',
-            '| parallel -n1 -n1 faidx', pima_data.genome_fasta, '>', smaller_contigs_fasta,
-        ]
-    )
-    print_and_run(pima_data, command)
+    # Some of the plasmids in the database have regions that align to the Ba reference genome at the SSU rRNA region
+    # these can show contigs that align to "ecoli" plasmids, but they actually align better to the Ba genome
+    # The plasmid annotation step was reporting all small contigs, but lets actually remove ones that align well to the reference genome
 
-    # See if there is anything in the small contigs file; if not, we done
-    # TODO - Add something to the report about no small contigs
-    small_contigs = pima_data.load_fasta(smaller_contigs_fasta)
-    if len(small_contigs) == 0:
+    if pima_data.reference_fasta:
         print_and_log(
             pima_data,
-            'No contigs smaller than 500kb found, skipping plasmid search', 
+            'Finding contigs that have at least 25% of their length not aligning to the reference genome and are < 500000 bp',
+            pima_data.sub_process_verbosity,
+            pima_data.sub_process_color,
+        )
+        smaller_contigs_fasta = os.path.join(pima_data.plasmid_dir, 'small_contigs.fasta')
+        align_stats = pima_data.query_alignment_stats.copy(deep=True)
+        align_stats['Size (bp)'] = pd.to_numeric(align_stats['Size (bp)'])
+        smaller_contigs = align_stats[(align_stats['Size (bp)'] < 500000.) & (align_stats['Perc Align'] < 75.)]['Contig'].to_list()
+        smaller_contigs_fasta = os.path.join(pima_data.plasmid_dir, 'small_contigs.fasta')
+        if len(smaller_contigs) == 0:
+            message = 'No contigs smaller than 500kb that do not align to the reference provided found, skipping plasmid search'
+            print_and_log(
+                pima_data,
+                message, 
+                pima_data.sub_process_verbosity, 
+                pima_data.sub_process_color,
+            )
+            pima_data.did_call_plasmids = True
+            pima_data.plasmids = None
+            make_finish_file(pima_data, pima_data.plasmid_dir)
+            pima_data.plasmid_notes = pd.concat([pima_data.plasmid_notes, pd.Series(message, dtype='object')])
+            return
+        else:
+            command = " ".join(
+                [
+                    'faidx', pima_data.genome_fasta, " ".join(smaller_contigs), '>', smaller_contigs_fasta,
+                ]
+            )
+            print_and_run(pima_data, command)
+    ## If there isn't a reference provided check all the short contigs
+    # Take very large things out of the assembly.  They aren't plasmids and take a long time to run
+    else:
+        print_and_log(
+            pima_data,
+            'Finding contigs < 500000 bp', 
             pima_data.sub_process_verbosity, 
             pima_data.sub_process_color,
         )
-        pima_data.did_call_plasmids = True
-        pima_data.plasmids = None
-        make_finish_file(pima_data, pima_data.plasmid_dir)
-        return
+        smaller_contigs_fasta = os.path.join(pima_data.plasmid_dir, 'small_contigs.fasta')
+        command = " ".join(
+            [
+                'faidx -i chromsizes', 
+                pima_data.genome_fasta,
+                '| awk \'($2 <= 500000){print $1}\'',
+                '| parallel -n1 -n1 faidx', pima_data.genome_fasta, '>', smaller_contigs_fasta,
+            ]
+        )
+        print_and_run(pima_data, command)
+
+        small_contigs = pima_data.load_fasta(smaller_contigs_fasta)
+        if len(small_contigs) == 0:
+            message = 'No contigs smaller than 500kb found, skipping plasmid search'
+            print_and_log(
+                pima_data,
+                message, 
+                pima_data.sub_process_verbosity, 
+                pima_data.sub_process_color,
+            )
+            pima_data.did_call_plasmids = True
+            pima_data.plasmids = None
+            make_finish_file(pima_data, pima_data.plasmid_dir)
+            pima_data.plasmid_notes = pd.concat([pima_data.plasmid_notes, pd.Series(message, dtype='object')])
+            return
                                 
     # Query plasmid sequences against the assembly using minimap2
     print_and_log(
@@ -137,8 +197,22 @@ def call_plasmids(pima_data: PimaData, settings: Settings):
         pima_data.sub_process_color,
     )
     plasmid_psl = os.path.join(pima_data.plasmid_dir, 'plasmid_hits.psl')
+    if not validate_file_and_size(pima_data, plasmid_psl):
+        message = 'No small contigs matched plasmids within the database after excluding pX01 and pX02'
+        print_and_log(
+            pima_data,
+            message, 
+            pima_data.sub_process_verbosity, 
+            pima_data.sub_process_color,
+        )
+        pima_data.did_call_plasmids = True
+        pima_data.plasmids = None
+        make_finish_file(pima_data, pima_data.plasmid_dir)
+        pima_data.plasmid_notes = pd.concat([pima_data.plasmid_notes, pd.Series(message, dtype='object')])
+        return
+
     sam2psl_stdout, sam2psl_stderr = std_files(os.path.join(pima_data.plasmid_dir, 'sam2psl'))
-    path2sam2psl = os.path.join(settings.pima_path, "Pima", "accessory_scripts", "sam2psl.py")
+    path2sam2psl = os.path.join(settings.pima_path, "accessory_scripts", "sam2psl.py")
     command = " ".join(
         [
             'python3',
@@ -162,22 +236,11 @@ def call_plasmids(pima_data: PimaData, settings: Settings):
         pima_data.sub_process_color,
     )
     pima_data.pchunks_dir = os.path.join(pima_data.plasmid_dir, 'pChunks')
-    
-    if find_checkpoint(pima_data, pima_data.pchunks_dir):
-        pima_data.did_call_plasmids = True
-        new_plasmid_tsv = os.path.join(pima_data.plasmid_dir, 'plasmids.tsv')
-        pima_data.plasmid_tsv = new_plasmid_tsv
-        try:
-            pima_data.plasmids = pd.read_csv(filepath_or_buffer = pima_data.plasmid_tsv, sep = '\t', header = 0)
-        except:
-            pima_data.plasmids = None
-        return
-    
     os.makedirs(pima_data.pchunks_dir)
     
     pima_data.plasmid_tsv = os.path.join(pima_data.pchunks_dir, 'plasmids.tsv')
-    stdout_file, stderr_file = std_files(os.path.join(pima_data.pchunks_dir, "pchunks"))
-    path2pChunks = os.path.join(settings.pima_path, "Pima", "accessory_scripts", "pChunks.R")
+    stdout_file, stderr_file = std_files(os.path.join(pima_data.plasmid_dir, "pchunks"))
+    path2pChunks = os.path.join(settings.pima_path, "accessory_scripts", "pChunks.R")
     command = " ".join(
         [
             'Rscript',
@@ -191,7 +254,23 @@ def call_plasmids(pima_data: PimaData, settings: Settings):
     )
     print_and_run(pima_data, command)
     pima_data.plasmid_tsv = os.readlink(os.path.join(pima_data.pchunks_dir, 'plasmids.tsv'))
-    validate_file_and_size_or_error(pima_data, pima_data.plasmid_tsv, 'Plasmid output table', 'cannot be found', 'is empty')
+    if not validate_file_and_size(pima_data, pima_data.plasmid_tsv):
+        message = 'No small contigs matched plasmids within the database after excluding pX01 and pX02'
+        print_and_log(
+            pima_data,
+            message, 
+            pima_data.sub_process_verbosity, 
+            pima_data.sub_process_color,
+        )
+        pima_data.did_call_plasmids = True
+        pima_data.plasmids = None
+        make_finish_file(pima_data, pima_data.plasmid_dir)
+        shutil.rmtree(pima_data.pchunks_dir, ignore_errors=True)
+        pima_data.plasmid_notes = pd.concat([pima_data.plasmid_notes, pd.Series(message, dtype='object')])
+        return
+
+    # delete orphan amrFinal.bed file that pChunks creates even though we turn off amr calling
+    os.remove(os.path.join(pima_data.pchunks_dir, 'amrFinal.bed'))
     
     # The final file is in pChunks
     new_plasmid_tsv = os.path.join(pima_data.plasmid_dir, 'plasmids.tsv')

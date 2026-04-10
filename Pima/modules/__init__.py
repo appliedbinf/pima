@@ -45,6 +45,7 @@ from .annotations import (
     validate_features,
     validate_blast,
     blast_feature_sets,
+    blast_ba_virulence_genes,
 )
 
 from .plasmids import (

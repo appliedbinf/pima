@@ -8,9 +8,9 @@ params {
     custom_config_version = 'master'
 
     // Default resource parameters. Expecting to be overwritten.
-    max_memory                 = '128.GB'
+    max_memory                 = 128.GB
     max_cpus                   = 16
-    max_time                   = '240.h'
+    max_time                   = 240.h
 }
 
 

@@ -24,19 +24,20 @@ class PimaData:
 
         # ONT FASTQ input
         self.ont_fastq = None
-        self.ont_raw_fastq = self.ont_fastq
+        self.ont_raw_fastq = None
         self.ont_read_count = None
         self.ont_read_lengths = None
         self.will_have_ont_fastq = False
         self.ont_read_lengths = []
 
-        # Read metadata
-        self.read_metadata = pd.Series(dtype=object)
+        #Sample Sheet
+        self.sample_sheet = None
 
         # Demultiplexing
         self.multiplexed = None
         self.nextflow = None
         self.barcodes = None
+        self.barcode_kit = None #placeholder so we can give an error if the user tries to demultiplex a single fastq file
         self.barcode_min_fraction = None
         self.barcode_summary = None
 
@@ -55,6 +56,7 @@ class PimaData:
         self.did_spades_illumina_fastq = False
         self.did_pilon_ont_assembly = False
         self.did_polypolish_ont_assembly = False
+        self.did_illumina_polishing = False # check if any polishing was done
 
         # Output options
         self.output_dir = None
@@ -97,19 +99,21 @@ class PimaData:
         self.feature_names = []
         self.feature_colors = []
         self.did_blast_feature_sets = False
-
+        self.ba_virulence_hits = None
+        
         # Download options
         self.download = False
+        self.example_sample_sheet = False
 
         # Reference options
-        self.reference_dir = None
         self.organism = None
+        self.organism_version = None
         self.organism_dir = None
         self.list_organisms = False
         self.will_have_reference_fasta = False
         self.reference = None
         self.amr_mutations = pd.Series(dtype=object)
-        self.mutation_regions = None
+        self.mutation_region_bed = None
         self.amr_region_names = None
         self.virulence_genes_fp = None
         self.did_call_mutations = False
@@ -129,12 +133,11 @@ class PimaData:
         self.alignment_notes = pd.Series(dtype=object)
         self.large_indel_notes = pd.Series(dtype=object)
         self.contig_alignment = pd.Series(dtype=object)
+        self.plasmid_notes = pd.Series(dtype=object)
         self.versions = pd.Series(dtype=object)
 
         self.logging_handle = None
         self.fake_run = False
-
-        self.bundle = None
         self.report = pd.Series(dtype=object)
 
         if opts is None or unknown_args is None:
@@ -150,6 +153,9 @@ class PimaData:
         # ONT FASTQ input
         self.ont_fastq = opts.ont_fastq
         self.ont_raw_fastq = self.ont_fastq
+
+        # Sample Sheet
+        self.sample_sheet = opts.sample_sheet
 
         # Demultiplexing
         self.multiplexed = opts.multiplexed
@@ -185,14 +191,24 @@ class PimaData:
         self.no_medaka = opts.no_medaka
 
         # Illumina polishing
-        self.illumina_polisher = opts.illumina_polisher
+        ## default to use pilon, but need to skip if building an illumina assembly or a user provides a genome & illumina reads
+        ### validate_pilon() handles making sure pilon has all the necessary files to run
+        if opts.illumina_polisher:
+            self.illumina_polisher = opts.illumina_polisher
+        elif self.ont_fastq is None and self.genome_fasta is not None:
+            self.illumina_polisher = "pilon"
+        elif self.ont_fastq is None:
+            self.illumina_polisher = "skip"
+        else:
+            self.illumina_polisher = "pilon"
 
         # Illumina metrics
         self.illumina_length_mean = None
         self.illumina_coverage_min = 30
         self.did_pilon_ont_assembly = False
         self.did_polypolish_ont_assembly = False
-
+        self.did_illumina_polishing
+        
         # The assembly itself
         self.genome = None
         self.contig_info = None
@@ -227,7 +243,6 @@ class PimaData:
         self.download = opts.download
 
         # Reference options
-        self.reference_dir = opts.reference_dir
         self.organism = opts.organism
         self.list_organisms = opts.list_organisms
         self.reference_fasta = opts.reference_genome
@@ -246,7 +261,6 @@ class PimaData:
 
         # Reporting
         self.no_report = False
-        self.bundle = opts.bundle
         self.analysis_name = opts.name
         self.mutation_title = "Mutations"
         self.report[self.mutation_title] = pd.Series(dtype="float64")

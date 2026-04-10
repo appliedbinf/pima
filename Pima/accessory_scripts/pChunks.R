@@ -149,7 +149,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     ## If we're out of sequece-plasmid hits, then stop here
     if (nrow(plasmidHits) == 0) {
         message(paste('Not hits found'))
-        return
+        return()
     }
 
     ## Find out how much of each query (contig) is covered by each target (plasmid).
@@ -654,8 +654,9 @@ pChunks(plasmidPSLFile = opt$'plasmid-psl', plasmidDatabase = opt$'plasmid-datab
         amrPSLFile = opt$'amr-blast', amrDatabase = opt$'amr-database',
         outputDirectory = opt$output,
         threads = opt$threads,
-#        searchDepth = c(1,1),
-        searchDepth = c(5,5),
+#        searchDepth = c(1,1), # controls how many times find_plasmids() runs, bootstrapping the results & picking the best
+#        searchDepth = c(5,5), # takes so long and doesn't seem that necessary?
+        searchDepth = c(3,3),
         noAMR = TRUE, noInc = TRUE,
         verbosity = 2)
 

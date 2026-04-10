@@ -1,6 +1,9 @@
 #TEMP DEV
 Pima_refactor_notes.md
 
+#Test Outputs
+temp_results/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -10,6 +13,8 @@ __pycache__/
 Pima/data/plasmids_and_vectors*
 Pima/data/kraken2*
 Pima/data/reference_sequences/Bacillus_anthracis/genome.fasta*
+Pima/data/reference_sequences/Bacillus_anthracis/confirmed_amr_mutations_blas.bed
+Pima/data/test_*
 
 # Nextflow
 Pima/nextflow_parallelization/nextflow.config

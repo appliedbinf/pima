@@ -38,8 +38,6 @@ def validate_contamination_check(pima_data: PimaData, settings: Settings):
 
     if os.path.isdir(settings.kraken_database_default): 
         pima_data.kraken_database = settings.kraken_database_default
-    elif os.path.isdir(settings.DockerPathKraken):
-        pima_data.kraken_database = settings.DockerPathKraken
     else:
         pima_data.errors.append("No kraken2 database detected, try and run pima with --download. Exiting now.")
     

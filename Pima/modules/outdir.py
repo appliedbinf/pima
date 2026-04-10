@@ -9,7 +9,7 @@ from Pima.utils.utils import print_and_log, start_logging
 
 
 def validate_output_dir(pima_data: PimaData, settings: Settings, log_messages:list=[]):
-
+  
     log_messages.append(("main", f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]', f"PiMA version: {settings.pima_version}"))
     log_messages.append(("main", f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]', "Validating output dir"))
 
@@ -18,7 +18,7 @@ def validate_output_dir(pima_data: PimaData, settings: Settings, log_messages:li
     elif pima_data.overwrite and pima_data.resume:
         pima_data.errors += ["--overwrite and --resume are mutually exclusive"]
     elif os.path.exists(pima_data.output_dir) and not (
-        pima_data.overwrite or pima_data.resume
+        pima_data.overwrite or pima_data.resume or pima_data.sample_sheet
     ):
         pima_data.errors += [
             "Output directory "
@@ -37,7 +37,16 @@ def make_outdir(pima_data: PimaData, log_messages: list):
         log_messages.append(("main", f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]', f"Resuming from previous run, previous log has been renamed to 'previous_<logname>.log.'"))
         report_logs(pima_data, log_messages)
         return
-
+    elif pima_data.sample_sheet and os.path.isdir(pima_data.output_dir):
+        start_logging(pima_data)
+        log_messages.append((
+            "main", 
+            f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]', 
+            f"Output directory already exists. Samples in the samplesheet will be written in the specified directory if allowed",
+            ))
+        report_logs(pima_data, log_messages)
+        return
+        
     if os.path.isdir(pima_data.output_dir):
         log_messages.append(("warn", f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]', f"Output directory {pima_data.output_dir} already exists. It will be removed."))
         shutil.rmtree(pima_data.output_dir)

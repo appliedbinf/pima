@@ -1,5 +1,4 @@
 {% set name = "pima" %}
-{% set python = "3.8" %}
 {% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
 
 package:
@@ -13,7 +12,7 @@ source:
 
 
 build:
-  number: 7
+  number: 1
   skip: True  # [win]
 
 requirements:
@@ -52,7 +51,6 @@ requirements:
     - r-optparse
     - samtools
     - varscan
-    - qcat
     - medaka
     - pilon
     - polypolish

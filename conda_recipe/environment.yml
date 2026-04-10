@@ -37,6 +37,7 @@ dependencies:
     - samtools==1.18 #needs to be the conda-forge version and NOT the bioconda version
     - varscan==2.4.6
     - medaka >=1.11 #bumped to get access to the inspect model tools
+    - setuptools==79.0.1 # 82 breaks a medaka version
     - pilon==1.24
     - polypolish==0.6
     - quast==5.2.0 #installs perl-circos as a dependency...

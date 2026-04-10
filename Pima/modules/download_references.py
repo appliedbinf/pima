@@ -10,6 +10,7 @@ from Pima.utils.utils import (
     print_and_log,
     print_and_run,
     validate_file_and_size,
+    calc_md5,
 )
 
 def validate_download(pima_data: PimaData, settings: Settings):
@@ -22,8 +23,6 @@ def validate_download(pima_data: PimaData, settings: Settings):
     pima_data.verbosity = 3
     
     download_databases(pima_data, settings)
-    # We don't need this as part of the analysis pipeline, if user tries to donwload, run the download function and then end
-    #pima_data.analysis.append(['download_databases', pima_data, settings])
 
     print_and_log(
         pima_data,
@@ -34,7 +33,7 @@ def validate_download(pima_data: PimaData, settings: Settings):
     sys.exit(0)
 
 
-def validate_organism(pima_data: PimaData):
+def validate_organism(pima_data: PimaData, settings: Settings):
     if pima_data.only_assemble:
         return
     
@@ -74,18 +73,24 @@ def validate_organism(pima_data: PimaData):
         )
         return
     
-    if not os.path.isdir(pima_data.reference_dir):
-        os.mkdir(pima_data.reference_dir)
+    if not os.path.isdir(settings.reference_dir):
+        os.mkdir(settings.reference_dir)
 
-    pima_data.organism_dir = os.path.join(pima_data.reference_dir, pima_data.organism)
+    pima_data.organism_dir = os.path.join(settings.reference_dir, pima_data.organism)
     if not os.path.isdir(pima_data.organism_dir):
         os.mkdir(pima_data.organism_dir)
     
     pima_data.reference_fasta = os.path.join(pima_data.organism_dir, "genome.fasta")
     pima_data.mutation_region_bed = os.path.join(pima_data.organism_dir, "confirmed_amr_mutations.bed")
-    #pima_data.mutation_regions = os.path.join(pima_data.organism_dir, "mutation_regions.bed")
     pima_data.organism_amr_appendices = glob.glob(os.path.join(pima_data.organism_dir, "amr_appendices","*md"))
-    
+
+    #READ version info & grab md5sums for the key files
+    with open(os.path.join(pima_data.organism_dir, "version.txt"), 'r') as f:
+        version = f.readline().strip().split(",")[1]
+        bed_md5 = f.readline().strip().split(",")[2]
+        genome_md5 = f.readline().strip().split(",")[2]
+    pima_data.organism_version = {"version": version, "genome": genome_md5, "bed": bed_md5}
+
     if not validate_file_and_size(pima_data, pima_data.reference_fasta):
         print_and_log(
             pima_data,
@@ -97,6 +102,22 @@ def validate_organism(pima_data: PimaData):
         pima_data.load_reference()
 
     pima_data.will_have_reference_fasta = True
+    #Verify checksums
+    genome_version = calc_md5(pima_data, os.path.join(pima_data.organism_dir, "genome.fasta"))
+    bed_version = calc_md5(pima_data, os.path.join(pima_data.organism_dir, "confirmed_amr_mutations.bed"))
+
+    if not genome_version == pima_data.organism_version['genome']:
+        pima_data.errors.append(
+            f"The {pima_data.reference_fasta} checksum does not match the expected version. "
+            f"If this was expected, please update the {os.path.join(pima_data.organism_dir, 'version.txt')} file."
+        )
+        return
+    if not bed_version == pima_data.organism_version['bed']:
+        pima_data.errors.append(
+            f"The {pima_data.mutation_region_bed} checksum does not match the expected version. "
+            f"If this was expected, please update the {os.path.join(pima_data.organism_dir, 'version.txt')} file."
+        )
+        return
 
 def download_organism(pima_data: PimaData, organism: str):
 
@@ -135,6 +156,15 @@ def download_organism(pima_data: PimaData, organism: str):
                     w.write(line)
 
         os.remove(genome_temp)
+        dl_genome_md5 = calc_md5(pima_data, genome)
+        if not pima_data.organism_version['genome'] == dl_genome_md5:
+            pima_data.errors.append(
+                f"The newly downloaded Banthracis genome has a md5sum that does not match expectations. "
+                f"This should not have happened. If you are confident the genome is identical you can update "
+                f"the {os.path.join(pima_data.organism_dir, 'version.txt')} file with the new genome's md5sum."
+                f"If the positions are not identical the mutations that PiMA searches for will not be valid."
+            )
+            return
 
 def download_databases(pima_data: PimaData, settings: Settings):
 
@@ -146,10 +176,8 @@ def download_databases(pima_data: PimaData, settings: Settings):
     )
 
     database_fasta = settings.plasmid_database_default_fasta
-    if not validate_file_and_size(pima_data, database_fasta) and validate_file_and_size(pima_data, settings.DockerPathPlasmid):
-        pima_data.plasmid_database = settings.DockerPathPlasmid
 
-    elif not validate_file_and_size(pima_data, database_fasta) and not validate_file_and_size(pima_data, settings.DockerPathPlasmid):
+    if not validate_file_and_size(pima_data, database_fasta):
         print_and_log(
             pima_data,
             'Downloading plasmid database', 
@@ -171,9 +199,8 @@ def download_databases(pima_data: PimaData, settings: Settings):
             pima_data.sub_process_verbosity, 
             pima_data.sub_process_color,
         )
-    if not os.path.isdir(settings.kraken_database_default) and validate_file_and_size(pima_data, settings.DockerPathKraken):
-        pima_data.kraken_database = settings.DockerPathKraken
-    elif not validate_file_and_size(pima_data, os.path.join(settings.kraken_database_default, "hash.k2d")) and not validate_file_and_size(pima_data, settings.DockerPathKraken):
+
+    if not validate_file_and_size(pima_data, os.path.join(settings.kraken_database_default, "hash.k2d")):
         print_and_log(
             pima_data,
             'Downloading and the prebuilt 8gb kraken2 database, 20230605, (may take some time)', 
