@@ -129,7 +129,7 @@ def kraken_fastq(pima_data: PimaData, settings: Settings, fastq, fastq_dir: str)
 
     # Read in the Kraken fractions and pull out the useful parts
     kraken_fracs = read_kraken_report(kraken_report)
-    pima_data.files_to_clean.append([kraken_class, kraken_unclass, kraken_out])
+    pima_data.files_to_clean.extend([kraken_class, kraken_unclass, kraken_out])
     return(kraken_fracs)
 
 def read_kraken_report(kraken_report: str):
