@@ -72,12 +72,15 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     outputPrefix = paste0(outputDirectory, "/plasmids")
     
     ## Read in and filter the plasmid hits
-    plasmidHits = read.table(plasmidPSLFile, row.names = NULL, header = FALSE, sep = '\t', stringsAsFactors = FALSE, skip = 5)
+    plasmidHits = read.table(plasmidPSLFile, row.names = NULL, header = FALSE, sep = '\t', stringsAsFactors = FALSE)
     colnames(plasmidHits) = c('match', 'mismatch', 'rep_m', 'Ns', 'tgap_c', 'tgap_b',
                 'qgap_c', 'qgap_b', 'strand',
                 'target', 'tlength', 'tstart', 'tstop',
                 'query', 'qlength', 'qstart', 'qstop',
                 'blocks', 'block_sizes', 'tstarts', 'qstarts')
+    # Control for weird contig names (strings, escape characters, etc)
+    plasmidHits[,'query'] <- as.character(plasmidHits[,'query'])
+    plasmidHits[,'target'] <- as.character(plasmidHits[,'target'])
     printif(paste("Sequence-plasmid hits:", nrow(plasmidHits)), verbosity > 0)
 
     plasmidHits = plasmidHits[order(plasmidHits[,'target'], -plasmidHits[,'qlength']), ]
@@ -137,7 +140,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
     printif(head(matchingFractions), verbosity > 1)
     printif(paste('Plasmid fractions:', paste(dim(matchingFractions), collapse = 'x')), verbosity > 1)
     
-    matchingFractions = matchingFractions[matchingFractions[,'fraction'] >= minTargetCoverage,]
+    matchingFractions = matchingFractions[matchingFractions[,'fraction'] >= minTargetCoverage, , drop = FALSE]
     printif(head(matchingFractions), verbosity > 1)
     printif(paste('Passing plasmid fractions:', paste(dim(matchingFractions), collapse = 'x')), verbosity > 1)
     
@@ -178,7 +181,7 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
         qBlockStarts = as.numeric(unlist(strsplit(x = plasmidHits[i,'qstarts'], ',')))
         
         for (j in 1:length(blockSizes)) {
-            queryCoverage[[query]][[target]][qBlockStarts[j]:(qBlockStarts[j]+blockSizes[j])] = 1
+            queryCoverage[[query]][[target]][(qBlockStarts[j]+1):(qBlockStarts[j]+blockSizes[j])] = 1
         }
         queryMismatches[[query]][[target]] = queryMismatches[[query]][[target]] + plasmidHits[i,'mismatch'] 
     }
@@ -314,10 +317,10 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
             for (j in 1:length(blockSizes)) {
 
                 ## Keep track of all contig alignments to this plasmid, even with repeats
-                plasmidCoverageWithRepeats[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])] = 1
+                plasmidCoverageWithRepeats[[target]][(targetStarts[j]+1):(targetStarts[j] + blockSizes[j])] = 1
 
                 ## Skip if this region of the query sequence has already been assigned to this plasmid
-                if (sum(contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0) <= 50) {
+                if (sum(contigCoverage[[query]][[target]][(queryStarts[j]+1):(queryStarts[j] + blockSizes[j])] == 0) <= 50) {
                     printif(paste('Sequence', query, 'already used for', target,
                                   '. ', paste0(queryStarts[j], '-', queryStarts[j] + blockSizes[j])), verbosity > 2)
                     next
@@ -330,9 +333,9 @@ findPlasmids = function(plasmidPSLFile = NULL, plasmidDatabase = NULL,
                     penalized = TRUE
                 }
 
-                plasmidCoverage[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0] =
-                    plasmidCoverage[[target]][targetStarts[j]:(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] == 0] + 1
-                contigCoverage[[query]][[target]][queryStarts[j]:(queryStarts[j] + blockSizes[j])] = 1
+                plasmidCoverage[[target]][(targetStarts[j]+1):(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][(queryStarts[j]+1):(queryStarts[j] + blockSizes[j])] == 0] =
+                    plasmidCoverage[[target]][(targetStarts[j]+1):(targetStarts[j] + blockSizes[j])][contigCoverage[[query]][[target]][(queryStarts[j]+1):(queryStarts[j] + blockSizes[j])] == 0] + 1
+                contigCoverage[[query]][[target]][(queryStarts[j]+1):(queryStarts[j] + blockSizes[j])] = 1
             }
 
             ## Relate this plasmid to this contig
