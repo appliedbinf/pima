@@ -1,6 +1,5 @@
 #TEMP DEV
 Pima_refactor_notes.md
-steps_to_reconcile_CDC-pima.md
 
 #Test Outputs
 temp_results/
@@ -16,6 +15,9 @@ Pima/data/kraken2*
 Pima/data/reference_sequences/Bacillus_anthracis/genome.fasta*
 Pima/data/reference_sequences/Bacillus_anthracis/confirmed_amr_mutations_blas.bed
 Pima/data/test_*
+Pima/data/amrfinder_db
+#conda recipe
+conda_recipe/test.yml
 
 # Nextflow
 Pima/nextflow_parallelization/nextflow.config

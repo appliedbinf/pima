@@ -190,6 +190,7 @@ def run_command(pima_data: PimaData, command: str, change_exe_dir: str = None):
 
         if result.returncode == 0:
             return result.stdout.split("\n")
+        
         elif re.search(r"\.stderr$", command):
             sterr_f = [x for x in command.split(" ") if re.search(r"\.stderr$", x)][0]
             message = f"Command {command} failed with the following error. exiting\n{Path(sterr_f).read_text()}"
@@ -283,7 +284,7 @@ def clean_up(pima_data: PimaData):
 
     if not pima_data.keep_intermediates:
         if len(pima_data.files_to_clean) > 0:
-            for file in pima_data.files_to_clean:
+            for file in pima_data.files_to_clean :
                 if os.path.isfile(file):
                     try:
                         os.remove(file)

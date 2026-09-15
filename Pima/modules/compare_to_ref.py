@@ -205,6 +205,12 @@ def validate_mutations(pima_data: PimaData):
             0
         )
     pima_data.amr_region_names = pima_data.mutation_regions.get('name').unique().tolist()
+
+    if pima_data.organism_dir:
+        non_amr_path = os.path.join(pima_data.organism_dir, "confirmed_non_amr.bed")
+        if os.path.isfile(non_amr_path):
+            pima_data.non_amr_bed = non_amr_path
+
     pima_data.analysis.append(["call_amr_mutations", pima_data])
   
 def dnadiff_fasta(pima_data: PimaData, output_prefix: str):
@@ -691,10 +697,6 @@ def call_amr_mutations(pima_data: PimaData):
         )
     pima_data.mutations_read_type = kind_of_reads
 
-    ##rplV calling has issues due to repetitive regions where the INDELs occur 
-    ##     - true variants are often at a lower percentage of population (< 30%)
-    ### Currently, when ONT and Illumina data are provided, only Illumina results are shown
-
     # Now call and filter variants with Varscan and filter
     varscan_raw_prefix = os.path.join(pima_data.mutations_dir, 'varscan_raw')
     varscan_mpileup(
@@ -736,6 +738,23 @@ def call_amr_mutations(pima_data: PimaData):
     #combine the two datasets
     merged_hits = pd.concat([verified_hits, verified_large_dels]).drop_duplicates(subset=['GE', 'start', 'stop', 'loc'], keep='first')
     merged_hits = pd.concat([verified_hits, verified_large_dels])
+
+    if pima_data.non_amr_bed:
+        non_amr = pd.read_csv(pima_data.non_amr_bed, sep="\t", header=0)
+        non_amr['start'] = non_amr['start'].astype(int)
+        non_amr['stop'] = non_amr['stop'].astype(int)
+        def _is_known_benign(row):
+            if row['classification_type'] != 'potential_confer_amr':
+                return False
+            try:
+                loc = int(row['loc'])
+            except (ValueError, TypeError):
+                return False
+            return ((non_amr['#contig'] == row['GE']) &
+                    (non_amr['start'] < loc) &
+                    (non_amr['stop'] >= loc)).any()
+        merged_hits = merged_hits[~merged_hits.apply(_is_known_benign, axis=1)]
+
     merged_hits_tsv = os.path.join(pima_data.mutations_dir, "intersect_amr-regions_variants_deletions.tsv")
     merged_hits.to_csv(
         path_or_buf = merged_hits_tsv,

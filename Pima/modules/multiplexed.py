@@ -147,7 +147,7 @@ def validate_multiplex_fastq(pima_data: PimaData):
     if pima_data.barcode_min_fraction >= 1:
         error_out(
             pima_data,
-            f"--barcode_min_fraction is greater than 1, did you mean to use {pima_data.barcode_min_fraction / 100}?",
+            f"--barcode-min-fraction is greater than 1, did you mean to use {pima_data.barcode_min_fraction / 100}?",
         ) 
 
     if pima_data.genome_assembly_size is not None and pima_data.genome_assembly_size != "estimate":
@@ -253,7 +253,7 @@ def identify_multiplexed_fastq_files(pima_data: PimaData):
         message = (
             "The following barcodes were found in the input directory but were NOT analyzed "
             f"because they contained less than {pima_data.barcode_min_fraction*100}% (default=0.025 [2.5%]) of the fastq data:\n"
-            "If you need to change the min_fraction, please re-run pima with the following flag '--barcode_min_fraction <fractional value>'\n"
+            "If you need to change the min_fraction, please re-run pima with the following flag '--barcode-min-fraction <fractional value>'\n"
         )
         for k, v in ignored_barcodes.items():
             message = message + "{:<15} {:>.1%}".format(k, v) + "\n"
@@ -460,10 +460,10 @@ def initialize_multiplex_analysis(pima_data: PimaData, settings: Settings):
 
     #not using nextflow, running pima in serial
     else:
+
         stop_logging(pima_data, "Sample specific logs are found in their respective directories, closing multiplex log now.")
         for barcode in pima_data.barcodes.keys():
             barcode_pima_data = copy.deepcopy(pima_data)
-            barcode_pima_settings = copy.deepcopy(settings)
             barcode_pima_data.multiplexed = None
             barcode_pima_data.sample_sheet = None
 
@@ -514,7 +514,7 @@ def strip_pima_cmd(pima_data, system_args: list):
     """
 
     params_to_change = ['--output', '--ont-fastq', '--threads', '--sample-sheet']
-    params_to_remove = ['--multiplexed', '--nextflow']
+    params_to_remove = ['--multiplexed', '--nextflow', '--barcode-min-fraction']
     if isinstance(pima_data.nextflow, str):
         system_args = re.sub(pima_data.nextflow, "", system_args)
     params_to_fix_path = ['--reference-genome', '--mutation-regions']

@@ -74,6 +74,9 @@ def validate_draw_circos(pima_data: PimaData, settings: Settings):
 
 def draw_features(pima_data: PimaData):
 
+    if pima_data.unique_hits.empty:
+        return
+
     print_and_log(
         pima_data,
         'Drawing features', 
@@ -85,21 +88,27 @@ def draw_features(pima_data: PimaData):
     
     # Check if results exist that we can use
     if find_checkpoint(pima_data, pima_data.drawing_dir):
-        feature_pngs = [png for png in os.listdir(pima_data.drawing_dir) if png.endswith('.png') and not png == "amr_matrix.png"]
-        for png in feature_pngs:
-            pima_data.feature_plots[png] = os.path.join(pima_data.drawing_dir, png)
+        feature_figs = [fig for fig in os.listdir(pima_data.drawing_dir) if fig.endswith('.svg') and not fig == "amr_matrix.svg"]
+        for fig in feature_figs:
+            pima_data.feature_plots[fig] = os.path.join(pima_data.drawing_dir, fig)
         return
     os.mkdir(pima_data.drawing_dir)
     make_start_file(pima_data, pima_data.drawing_dir)
     
     figure_width = 13
-    
+
     # Draw one plot per contig for simplicity
     for contig in pima_data.genome:
         
-        contig_plot_pdf = os.path.join(pima_data.drawing_dir, contig.id + '.pdf')
-        contig_plot_png = os.path.join(pima_data.drawing_dir, contig.id + '.png')
+        contig_plot_svg = os.path.join(pima_data.drawing_dir, f"{contig.id}.svg")
+        #contig_plot_png = os.path.join(pima_data.drawing_dir, f"{contig.id}.png")
         
+        contig_features = pima_data.unique_hits[pima_data.unique_hits['chrom'] == contig.id]
+        if contig_features.empty:
+            continue
+
+        #contains amr & inc, nested in each is a list of graphic features to be drawn
+        #amr: GF(tetL, start-end), GF(bla, start-end)...
         feature_sets_to_plot = pd.Series(dtype = object)
 
         print_and_log(
@@ -109,31 +118,32 @@ def draw_features(pima_data: PimaData):
             pima_data.sub_process_color,
         )
         
-        for feature_number in range(len(pima_data.feature_hits)):
-                
-            feature_name = pima_data.feature_hits.index.to_list()[feature_number]
-            these_features = pima_data.feature_hits[feature_name]
-            if (these_features.shape[0] == 0):
+        for feature_type in contig_features['source'].unique(): # amr / inc
+            feature_plots = []
+            features = contig_features[contig_features['source'] == feature_type]
+            
+            if features.empty:
                 continue
 
-            contig_features = these_features.loc[these_features.iloc[:,0] == contig.id,:]
-            if (contig_features.shape[0] == 0):
-                continue
-                
-            features_to_plot =[]
-            
-            for i in range(contig_features.shape[0]):
-                i = contig_features.iloc[i,:]
-                features_to_plot += [GraphicFeature(start = i[1], end = i[2], label = i[3],
-                                                    strand = 1*i[5], color = pima_data.feature_colors[feature_number])]
-                
-            feature_sets_to_plot[feature_name] = features_to_plot
+            for i in range(features.shape[0]):
+                feature = features.iloc[i,]
+                feature_plots.append(
+                    GraphicFeature(
+                        start = feature['start'], 
+                        end = feature['end'], 
+                        label=feature['gene'],
+                        strand=f"{feature['strand']}1",
+                        color = getattr(pima_data, f"{feature['source']}_color"),
+                        box_color = getattr(pima_data, f"{feature['source']}_color"),
+                    )
+                )
+            feature_sets_to_plot[feature_type] = feature_plots
 
         if len(feature_sets_to_plot) == 0:
             continue
             
         # Add blank feature sets for the header and ruler
-        real_sets = feature_sets_to_plot.index.tolist()
+        real_sets = feature_sets_to_plot.index.tolist() # = amr and/or inc
         empty_set = [GraphicFeature(start = 1, end = len(contig), color = '#FFFFFF')]
 
         # Figure out high each plot will be on its own for later scaling
@@ -174,17 +184,18 @@ def draw_features(pima_data: PimaData):
                 plot.text(x = 0, y = ymax, s = contig.id) 
             
         figure.tight_layout()
-        figure.savefig(contig_plot_pdf)
-        figure.savefig(contig_plot_png)
+        figure.savefig(contig_plot_svg)
+        #figure.savefig(contig_plot_png, dpi=300)
 
-        pima_data.feature_plots[contig.id] = contig_plot_png
+        pima_data.feature_plots[contig.id] = contig_plot_svg
 
     make_finish_file(pima_data, pima_data.drawing_dir)
 
 
 def draw_amr_matrix(pima_data: PimaData):
 
-    if not (pima_data.did_call_mutations or pima_data.did_blast_feature_sets):
+    have_gene_hits = not pima_data.unique_hits.empty #only run this is we have variant_data OR gene_data to draw
+    if not (pima_data.did_call_mutations or have_gene_hits):
         return
 
     print_and_log(
@@ -199,24 +210,20 @@ def draw_amr_matrix(pima_data: PimaData):
         os.mkdir(pima_data.drawing_dir)
 
     amr_to_draw = pd.DataFrame(columns =['gene', 'drug'])
-    
-    # Roll up AMR gene hits
     amr_df = pd.DataFrame(columns =['gene', 'drug'])
-    if 'amr' in pima_data.feature_hits:
-        bed_columns = ['contig', 'start', 'stop', 'gene', 'percent_id', 'strand']
-        amr_hits = pima_data.feature_hits['amr'].copy(deep=True)
-        if amr_hits.shape[0] > 0:
-            amr_hits = amr_hits.set_axis(bed_columns, axis=1)
-            amr_hits = amr_hits.assign(gene=amr_hits['gene'].apply(lambda x: "_".join(x.split("_")[:-1])))
-            amr_hits = pd.merge(amr_hits[['gene']], pima_data.amr_gene_drug, how="left", left_on="gene", right_on=0, suffixes=('','_y'))
-            amr_hits = amr_hits.assign(drug=amr_hits[[1]])
-            amr_df = pd.concat([amr_df, amr_hits[['gene', 'drug']]])
-            
+    # Roll up Resfinder / AMRFinder gene hits
+    if not pima_data.unique_hits.empty:
+        amr_df = pd.concat(
+            [
+                amr_df,
+                pima_data.unique_hits[pima_data.unique_hits['source'] == 'amr'][['gene', 'class']].set_axis(['gene', 'drug'], axis=1)
+            ]
+        )
+
     # Roll up potentially resistance conferring mutations
     snp_df = pd.DataFrame(columns =['gene', 'drug'])
     indel_df = pd.DataFrame(columns =['gene', 'drug'])
 
-    #NEED to check if this works
     if pima_data.did_call_mutations and pima_data.amr_mutations.shape[0] > 0:
         mutations = pima_data.amr_mutations.copy(deep=True)
         ## Duplicated from the report.py PimaReport class, probably should consolidate into compare_to_ref, but wanted to keep all the data in the pima_data object for now
@@ -232,7 +239,7 @@ def draw_amr_matrix(pima_data: PimaData):
                                         .apply(lambda x: f'assembly_del{x}' if (x.isnumeric()) else x) \
                                         .apply(lambda x: ''.join(filter(str.isalpha, x))) \
                                         .apply(lambda x: x if (x != len(x)*x[0]) else 'na')
-            #mutations = mutations.query("var_type != 'indel' | var_mod != 'na'") #drop homopolymer indels
+
             mutations = mutations[~((mutations['var'].str.match(r"[+-]")) & (mutations['var_mod'] == 'na'))] #drop homopolymer indels
         column_names = ["gene", "Contig(ref)", "Pos(ref)", "drug"]
         #SNPs
@@ -260,7 +267,7 @@ def draw_amr_matrix(pima_data: PimaData):
             ), 
             index = False, 
         )
-    elif pima_data.did_blast_feature_sets and amr_df.shape[0] > 0:
+    elif amr_df.shape[0] > 0:
         #Build matrix
         amr_to_draw = amr_df[['gene', 'drug']]
         amr_to_draw.to_csv(
@@ -281,8 +288,7 @@ def draw_amr_matrix(pima_data: PimaData):
     for hit_idx, hit in amr_to_draw.iterrows():
         amr_matrix.loc[hit['gene'], hit['drug']] = 1
     amr_matrix = amr_matrix.sort_values(list(present_drugs), ascending=False)  
-    #amr_matrix_pdf, amr_matrix_png = [os.path.join(pima_data.output_dir, 'amr_matrix.' + i) for i in ['png', 'pdf']]
-    amr_matrix_png = os.path.join(pima_data.drawing_dir, 'amr_matrix.png')
+    amr_matrix_fig = os.path.join(pima_data.drawing_dir, 'amr_matrix.svg')
     int_matrix = amr_matrix[amr_matrix.columns].astype(int)
 
     figure, axis = plt.subplots()
@@ -313,10 +319,9 @@ def draw_amr_matrix(pima_data: PimaData):
     figure.set_size_inches(figure.get_size_inches()[0], plot_height)
     figure.tight_layout()
 
-    #plt.savefig(amr_matrix_pdf)
-    figure.savefig(amr_matrix_png, dpi = set_dpi)
-    pima_data.report[pima_data.amr_matrix_title]['png'] = 'amr_matrix.png'
-    pima_data.amr_matrix_png = amr_matrix_png
+    plt.savefig(amr_matrix_fig)
+    ##figure.savefig(amr_matrix_png, dpi = set_dpi)
+    pima_data.amr_matrix_fig = amr_matrix_fig
     pima_data.did_draw_amr_matrix = True 
 
 
@@ -375,8 +380,8 @@ def draw_circos(pima_data: PimaData, settings: Settings):
         sorted_contig_dirs = [path for contig in pima_data.reference_contig_order for path in contig_dirs if contig in path] # or re.search(contig, path)
         for contig_dir in sorted_contig_dirs:
             contig = os.path.basename(contig_dir)
-            circos_png = os.path.join(contig_dir, 'circos.png')
-            pima_data.contig_alignment[contig] = circos_png
+            circos_svg = os.path.join(contig_dir, 'circos.svg')
+            pima_data.contig_alignment[contig] = circos_svg
         pima_data.did_circos_plots = True
         return
     
@@ -387,8 +392,8 @@ def draw_circos(pima_data: PimaData, settings: Settings):
     if pima_data.self_circos:
         #specify our reference
         pima_data.reference_fasta = pima_data.genome_fasta
-        genome_sizes = re.sub('.fasta', '.sizes', pima_data.reference_fasta)
-        reference_sizes_fp = os.path.join(pima_data.circos_dir, os.path.basename(genome_sizes))
+        #genome_sizes = re.sub('.fasta', '.sizes', pima_data.reference_fasta)
+        reference_sizes_fp = os.path.join(pima_data.circos_dir, 'genome.sizes')
         command = " ".join(
             [
                 'faidx -i chromsizes', 
@@ -597,7 +602,7 @@ def draw_circos(pima_data: PimaData, settings: Settings):
                 )
 
             #we provided illumina data, but we didn't call mutations because the genomes were too distant
-            elif pima_data.illumina_fastq is not None and (95.0 <= pima_data.reference_identity <= pima_data.reference_identity_min):
+            elif (isinstance(pima_data.illumina_fastq, list) and pima_data.illumina_fastq) and (95.0 <= pima_data.reference_identity <= pima_data.reference_identity_min):
                 illumina_unfiltered_bam = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina_unfilt.bam')
                 illumina_reference_coverage_fp = os.path.join(pima_data.circos_dir, 'reference_mapping_illumina.mpileup')
                 minimap_and_sort(
@@ -760,7 +765,7 @@ def draw_circos(pima_data: PimaData, settings: Settings):
             )
 
             circos_fig = circos_elem.main()
-            
+
             #draws a solid blue line for the reference backbone if you're using the denovo genome
             if pima_data.self_circos:
                 circos_elem.ge_circle.barplot(
@@ -772,11 +777,26 @@ def draw_circos(pima_data: PimaData, settings: Settings):
                     facecolor="#1f77b4",
                     linewidth=0,
                 )
-                
-            circos_fig.save(file_name=os.path.join(contig_dir,'circos'), format='png', dpi=100)
+ 
+            #rasterize the coverage plots to shrink the svg
+            # need to extract the matplotlib object that pycircos encapsulates
+            # While doing so, lets try and squeeze as much whitespace as possible from the plots
+            mod_fig = circos_fig.figure
+            for ax in mod_fig.get_axes():
+                ax.set_rasterization_zorder(2)
+                ax.margins(0)
+                ax.set_position([0,0,1,1])
+                if hasattr(ax, 'collections') and ax.collections:
+                    for collection in ax.collections:
+                        collection.set_zorder(1)
+                if hasattr(ax, 'patches') and ax.patches:
+                    for patch in ax.patches:
+                        patch.set_zorder(1)
+
+            mod_fig.savefig(fname=os.path.join(contig_dir,'circos.svg'), format='svg', dpi=300, bbox_inches='tight', pad_inches=0)
 
             # Keep track of images for the report
-            circos_png = os.path.join(contig_dir, 'circos.png')
-            pima_data.contig_alignment[contig] = circos_png
+            circos_svg = os.path.join(contig_dir, 'circos.svg')
+            pima_data.contig_alignment[contig] = circos_svg
         pima_data.did_circos_plots = True
         make_finish_file(pima_data, pima_data.circos_dir)         

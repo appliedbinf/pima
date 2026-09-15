@@ -1,5 +1,6 @@
 process PIMA_SINGLEPLEX {
     tag "$meta.sample_id"
+    errorStrategy 'ignore'
     
     input:
     val meta

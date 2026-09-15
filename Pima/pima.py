@@ -60,7 +60,10 @@ def run_validation(pima_data: PimaData, settings: Settings):
     modules.validate_medaka(pima_data)
     modules.validate_illumina_polish(pima_data)
     modules.validate_evaluate_assembly(pima_data)
-    modules.validate_features(pima_data, settings)
+    modules.validate_resfinder(pima_data, settings)
+    modules.validate_inc(pima_data, settings)
+    modules.validate_virulence(pima_data, settings)
+    modules.validate_amrfinder(pima_data, settings)
     modules.validate_blast(pima_data, settings)
     modules.validate_reference_fasta(pima_data)
     modules.validate_quast(pima_data)
@@ -83,11 +86,12 @@ def run_validation(pima_data: PimaData, settings: Settings):
         pima_data.main_process_color,
     )
 
+
 def define_workflow(pima_data: PimaData):
     """
     Step through modules and run pima
 
-    The run_validation steps parse the cmdline args, check all necessary tools / files are availabe for the
+    The run_validation steps parse the cmdline args, check all necessary tools / files are available for the
     requested steps in the pipeline, and queues up the modules by adding the steps to 
     pima_data.analysis object
     """

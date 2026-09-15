@@ -23,33 +23,44 @@ class PimaReport:
 
     def __init__(self, pima_data: PimaData, settings: Settings):
 
-        self.cdc_advisory = (
-            'The analysis and report presented here should be treated as preliminary.  '
-            'Please contact the CDC/BDRD with any results regarding _Bacillus anthracis_.'
-        )
         self.pima_data = pima_data
         self.doc = None
         self.pima_version = settings.pima_version
-        self.summary_title = 'Summary'
-        self.basecalling_title = 'Basecalling'
-        self.assembly_notes_title = 'Assembly notes'
-        self.alignment_title = 'Comparison with reference'
-        self.reference_align_title = 'Reference sequences identified within query'
-        self.query_align_title = 'Query sequences identified within reference'
-        self.alignment_notes_title = 'Alignment notes'
-        self.plasmid_notes_title = 'Plasmid annotation notes'
-        self.contig_alignment_title = 'Alignment vs. reference contigs'
-        self.large_indel_title = 'Large insertions & deletions'
-        self.large_indel_notes_title = 'Large insertions & deletions notes'
-        self.snp_indel_title = 'SNPs and small indels'
-        self.feature_title = 'Features found in the assembly'
-        self.feature_plot_title = 'Feature annotation plots'
-        self.mutation_title = 'AMR Conferring mutations found in the sample'
-        self.amr_matrix_title = 'AMR matrix'
-        self.appendix_title = "Appendices"
 
-        self.methods = pd.Series(dtype='float64')
+        #Report Sections ections
+        self.run_summary = "Run Summary"
+        self.run_metrics_title = "Run Metrics"
+        self.feature_detection_title = "Feature Detection"
+        self.reference_comparison_title = "Comparison with reference"
         self.methods_title = 'Methods'
+
+        #Report layout
+        self._run_metrics = [
+            self.add_ont_library_information,
+            self.add_illumina_library_information,
+            self.add_assembly_information,
+            self.add_contig_info,
+            self.add_assembly_notes,
+            self.add_contamination
+        ]
+        self._feature_detection = [
+            self.add_amr_matrix,
+            self.add_feature_plots,
+            self.add_virulence_gene_hits,
+            self.add_resfinder_amr,
+            self.add_amrfinder_results,
+            self.add_inc,            
+            self.add_plasmids
+        ]
+        self._reference_comparison = [
+            self.add_alignment,
+            self.add_circos,
+            self.add_mutations,
+            self.add_large_indels
+        ]
+
+        #Track methods used
+        self.methods = pd.Series(dtype='float64')
         self.contamination_methods_title = 'Contamination check'
         self.methods[self.contamination_methods_title] = pd.Series(dtype='float64')
         self.assembly_methods_title = 'Assembly'
@@ -60,7 +71,7 @@ class PimaReport:
         self.methods[self.reference_methods_title] = pd.Series(dtype='float64')
         self.mutation_methods_title = 'Mutation screening'
         self.methods[self.mutation_methods_title] = pd.Series(dtype='float64')
-        self.feature_methods_title = 'Feature annotation'
+        self.feature_methods_title = 'AMR/INC Gene annotation'
         self.methods[self.feature_methods_title] = pd.Series(dtype='float64')
         self.plasmid_methods_title = 'Plasmid annotation'
         self.methods[self.plasmid_methods_title] = pd.Series(dtype='float64')
@@ -68,22 +79,48 @@ class PimaReport:
         self.methods[self.circos_methods_title] = pd.Series(dtype='float64')
         self.appendices = []
 
-    def start_doc(self): #Converted
-        header_text = 'Analysis of ' + self.pima_data.analysis_name
-        self.doc = MdUtils(file_name=self.pima_data.report_md,title=header_text)
+    def wordwrap_markdown(self,string):
+        if string:
+            if len(string) < 35:
+                return(string)
+            else:
+                if '/' in string:
+                    adjust = string.split('/')
+                    out = ''
+                    max = 35
+                    for i in adjust:
+                        out = out + '/' + i
+                        if len(out) > max:
+                            out += '<br>'
+                            max += 35
+                    return(out)
+                else:
+                    out = [string[i:i + 35] for i in range(0, len(string), 50)]
+                    return('<br>'.join(out))
+        else:
+            return(string)
+
+    def start_doc(self): 
+        header_text = f'Analysis of {self.pima_data.analysis_name}'
+        self.doc = MdUtils(file_name=self.pima_data.report_md, title=header_text)
         self.doc.new_paragraph(f'PiMA Version: {self.pima_version}')
+
+        cdc_advisory = (
+            'The analysis and report presented here should be treated as preliminary.  '
+            'Please contact the CDC/BDRD with any results regarding _Bacillus anthracis_.'
+        )
+        self.doc.new_header(level=1, title='CDC Advisory', add_table_of_contents='n')
+        self.doc.new_paragraph(cdc_advisory)
+        self.doc.new_line()
 
     def add_tableOfContents(self):
         self.doc.create_marker(text_marker="TableOfContents")
         self.doc.new_line()
         self.doc.new_line()
 
-    def add_run_information(self): #Converted
+    def add_run_information(self): 
         self.doc.new_line()
-        self.doc.new_header(1,'Run Information')
-
-        #if nextflow was used, pima_data has the work dir names saved for the result paths
-        #Can run "correct_nextflow_path" to update the string with the expected location
+        self.doc.new_header(level=1, title='Run Information', add_table_of_contents='n')
 
         if self.pima_data.organism:
             Table_list = [
@@ -131,7 +168,27 @@ class PimaReport:
             self.add_tableOfContents()
             self.doc.new_line()            
 
-    def add_ont_library_information(self):
+# Section Headers & Info Orchestration
+    def add_run_metrics(self):
+        self.doc.new_line()
+        self.doc.new_header(level=1, title=self.run_metrics_title)
+        for metric_func in self._run_metrics:
+            metric_func()
+
+    def add_feature_detection(self):
+        self.doc.new_line()
+        self.doc.new_header(level=1, title=self.feature_detection_title)
+        for metric_func in self._feature_detection:
+            metric_func()
+
+    def add_reference_comparison(self):
+        self.doc.new_line()
+        self.doc.new_header(level=1, title=self.reference_comparison_title)
+        for metric_func in self._reference_comparison:
+            metric_func()
+
+# Subsections - info generators
+    def add_ont_library_information(self): #done
 
         if self.pima_data.ont_n50 is None:
             return
@@ -150,7 +207,7 @@ class PimaReport:
         self.doc.new_table(columns=2, rows=4, text=Table_List, text_align='left')
         self.doc.new_line()
 
-    def add_illumina_library_information(self):
+    def add_illumina_library_information(self): #done
         if self.pima_data.illumina_length_mean is None:
             return
 
@@ -168,7 +225,7 @@ class PimaReport:
         ]
         self.doc.new_table(columns=2, rows=4, text=Table_List, text_align='left')
 
-    def add_assembly_information(self):
+    def add_assembly_information(self): #done
         if self.pima_data.genome is None:
             return
 
@@ -228,27 +285,6 @@ class PimaReport:
             self.methods[self.illumina_polishing_methods_title] = pd.concat([self.methods[self.illumina_polishing_methods_title],
                 pd.Series(method, dtype='object')])
 
-    def wordwrap_markdown(self,string):
-        if string:
-            if len(string) < 35:
-                return(string)
-            else:
-                if '/' in string:
-                    adjust = string.split('/')
-                    out = ''
-                    max = 35
-                    for i in adjust:
-                        out = out + '/' + i
-                        if len(out) > max:
-                            out += '<br>'
-                            max += 35
-                    return(out)
-                else:
-                    out = [string[i:i + 35] for i in range(0, len(string), 50)]
-                    return('<br>'.join(out))
-        else:
-            return(string)
-
     def add_contig_info(self):
 
         if self.pima_data.contig_info is None:
@@ -274,13 +310,13 @@ class PimaReport:
             self.doc.new_table(columns=3, rows=row_count, text=Table_List, text_align='left')
 
     def add_assembly_notes(self):
-
+        assembly_notes_title = 'Assembly notes'
         if len(self.pima_data.assembly_notes) == 0:
             return
 
         self.doc.new_line()
         self.doc.new_line()
-        self.doc.new_header(2, self.assembly_notes_title)
+        self.doc.new_header(2, assembly_notes_title)
 
         for note in self.pima_data.assembly_notes:
             self.doc.new_line(note)
@@ -316,10 +352,13 @@ class PimaReport:
         method = 'Kraken2 (' + self.pima_data.versions['kraken2'] + ') was used to assign the raw reads into taxa.'
         self.methods[self.contamination_methods_title] = pd.concat([self.methods[self.contamination_methods_title],
             pd.Series(method, dtype="object")])
-        """ self.methods[self.contamination_methods_title] = self.methods[self.contamination_methods_title].append(
-            pd.Series(method)) """
 
     def add_alignment(self):
+        alignment_title = 'Comparison with reference'
+        snp_indel_title = 'SNPs and small indels'
+        reference_align_title = 'Reference sequences identified within query'
+        query_align_title = 'Query sequences identified within reference'    
+        alignment_notes_title = 'Alignment notes'
 
         if self.pima_data.genome_fasta is None:
             return
@@ -331,9 +370,9 @@ class PimaReport:
         if self.pima_data.reference is not None:
         
             self.doc.new_line()
-            self.doc.new_header(level=2, title=self.alignment_title)
+            self.doc.new_header(level=2, title=alignment_title)
             self.doc.new_line()
-            self.doc.new_header(level=3, title=self.snp_indel_title)
+            self.doc.new_header(level=3, title=snp_indel_title, add_table_of_contents='n')
 
             Table_1 = [
                 "Category",
@@ -353,7 +392,7 @@ class PimaReport:
                 return
             
             self.doc.new_line()
-            self.doc.new_header(level=3, title=self.reference_align_title)
+            self.doc.new_header(level=3, title=reference_align_title, add_table_of_contents='n')
             Table_List = [
                     "Reference Contig",
                     "Size (bp)",
@@ -372,7 +411,7 @@ class PimaReport:
                 return
             
             self.doc.new_line()
-            self.doc.new_header(level=3, title=self.query_align_title)
+            self.doc.new_header(level=3, title=query_align_title, add_table_of_contents='n')
             Table_List = [
                     "Query Contig",
                     "Size (bp)",
@@ -387,7 +426,7 @@ class PimaReport:
             self.doc.new_line()
 
             if len(self.pima_data.alignment_notes) > 0:
-                self.doc.new_header(level=3, title=self.alignment_notes_title)
+                self.doc.new_header(level=3, title=alignment_notes_title, add_table_of_contents='n')
                 for note in self.pima_data.alignment_notes:
                     self.doc.new_line(note)
 
@@ -406,18 +445,11 @@ class PimaReport:
             
             for contig in alignments.index.tolist():
                 contig_title = 'Alignment to ' + contig
-                image_png = alignments[contig]
-                self.doc.new_line()
-                self.doc.new_header(level=3,title=contig_title)
-                self.doc.new_line()
+                image = alignments[contig]
+                self.doc.new_header(level=3, title=contig_title, add_table_of_contents='n')
                 self.doc.write(
-                    self.doc.new_inline_image(
-                        text='contig_title',
-                        path=os.path.abspath(image_png)
-                    )
-                    ,wrap_width=0
+                    f"\n<img src='{image}' style='width: 3in; height: auto;' />\n"
                 )
-                self.doc.new_line()
     
             if self.pima_data.self_circos:
                 method = f"Sequence coverage plots were visualized using pycircos v0.3"
@@ -427,61 +459,113 @@ class PimaReport:
                 method = f"Alignments of assembled genome and sequence coverage information to provided reference genome were visualized using pycircos v0.3"
                 self.methods[self.circos_methods_title] = pd.concat([self.methods[self.circos_methods_title], pd.Series(method,dtype="object")])
 
-    def add_features(self):
-
-        #if we didn't produce an assembly, we don't search for genes and this series is empty
-        if len(self.pima_data.feature_hits) == 0:
-            return
-        #if we did produce an assembly we search for both amr and inc, so feature_hits has a length
-        #check if both inc and amr dataframes are 0
-        if all(size == 0 for size in (len(self.pima_data.feature_hits['amr']), len(self.pima_data.feature_hits['inc']))):
+    def add_resfinder_amr(self):
+        resfinder_title = 'AMR genes from resfinder'
+        if self.pima_data.resfinder_hits.empty:
             self.doc.new_line()
-            self.doc.new_header(level=2,title=self.feature_title)
-            self.doc.new_paragraph('No AMR or INC genes detected above 95% idenity')
+            self.doc.new_header(level=2,title=resfinder_title)
+            self.doc.new_paragraph('No AMR genes detected above 90% identity')
             return
-
-        #Do we really want to include the inc hits within the features table? Would this be better split?
+        
         self.doc.new_line()
-        self.doc.new_header(level=2,title=self.feature_title)
+        self.doc.new_header(level=2,title=resfinder_title)       
 
-        for feature_name in self.pima_data.feature_hits.index.tolist():
+        features = self.pima_data.resfinder_hits.copy()
+        features[1] = features.apply(lambda x: '{:,}'.format(x[1]), axis=1) #start position of feature
+        features[2] = features.apply(lambda x: '{:,}'.format(x[2]), axis=1) #end position
+        features[3] = features[3].str.split("_").str[:-1].str.join('_')
+        features[4] = features.apply(lambda x: '{:.1f}'.format(x[4]*100), axis=1) #round the percID to 3 dec.
+        
+        row_count=len(features)+1
+        Table_List = [
+            'Contig', 'Start', 'Stop', 'Gene', 'Identity (%)', 'Abx Class'
+        ]
+        col_count=len(Table_List)
+        Table_List.extend(features[[0,1,2,3,4,6]].values.flatten().tolist())
+        self.doc.new_line()
+        self.doc.new_table(columns=col_count, rows=row_count, text=Table_List, text_align='left')
 
-            features = self.pima_data.feature_hits[feature_name].copy()
-            if features.shape[0] == 0:
-                continue
+        #Same method for both AMR/INC detection
+        method = (
+            f"The genome assembly was queried for features using blastn v{self.pima_data.versions['blastn']}. "
+            f"Feature hits were clustered using bedtools v{self.pima_data.versions['bedtools']} "
+                        f"and the highest scoring hit for each cluster was reported."
+        )
 
-            features[1] = features.apply(lambda x: '{:,}'.format(x[1]), axis=1) #start position of feature
-            features[2] = features.apply(lambda x: '{:,}'.format(x[2]), axis=1) #end position
+        #if below exists skip
+        if self.methods[self.feature_methods_title].empty:
+            self.methods[self.feature_methods_title] = pd.concat([self.methods[self.feature_methods_title], pd.Series(method, dtype='object')])
 
+    def add_inc(self):
+        inc_title = 'Plasmid incompatibility genes'
+        if self.pima_data.inc_hits.empty:
             self.doc.new_line()
-            self.doc.new_header(level=3,title=feature_name)
+            self.doc.new_header(level=2,title=inc_title)
+            self.doc.new_paragraph('No INC genes detected above 95% identity')
+            return
+        
+        self.doc.new_line()
+        self.doc.new_header(level=2,title=inc_title)       
 
-            if (features.shape[0] == 0):
-                continue
+        features = self.pima_data.inc_hits.copy()
+        features[1] = features.apply(lambda x: '{:,}'.format(x[1]), axis=1) #start position of feature
+        features[2] = features.apply(lambda x: '{:,}'.format(x[2]), axis=1) #end position
+        features[3] = features[3].str.split("_").str[:-1].str.join('_')
+        features[4] = features.apply(lambda x: '{:.3f}'.format(x[4]), axis=1) #round the percID to 3 dec.
 
-            for contig in pd.unique(features[0]): #contig name
-                self.doc.new_line(f'Contig ID: {contig}')
 
-                #subset features dataframe by the contig IDs
-                contig_features = features.loc[(features[0] == contig)]
-                Table_List = [
-                    'Start', 'Stop', 'Feature', 'Identity (%)', 'Strand',
-                ]
+        row_count=len(features)+1
+        Table_List = [
+            'Contig', 'Start', 'Stop', 'Gene', 'Identity (%)',
+        ]
+        col_count=len(Table_List)
+        Table_List.extend(features[[0,1,2,3,4]].values.flatten().tolist())
+        self.doc.new_line()
+        self.doc.new_table(columns=col_count, rows=row_count, text=Table_List, text_align='left')
 
-                for i in range(contig_features.shape[0]): #take each feature from the contig table
-                    feature = contig_features.iloc[i, ].copy(deep=True) 
-                    feature[3] = "_".join(feature[3].split("_")[:-1])
-                    feature[4] = '{:.3f}'.format(feature[4]) #round the percID to 3 dec.
-                    Table_List.extend(feature[1:].values.astype(str).tolist()) #pandas angry if different types
+        #Same method for both AMR/INC detection
+        method = (
+            f"The genome assembly was queried for features using blastn v{self.pima_data.versions['blastn']}. "
+            f"Feature hits were clustered using bedtools v{self.pima_data.versions['bedtools']} "
+                        f"and the highest scoring hit for each cluster was reported."
+        )
 
-                row_count = int(len(Table_List) / 5)
-                self.doc.new_line()
-                self.doc.new_table(columns=5, rows=row_count, text=Table_List, text_align='left')
+        if self.methods[self.feature_methods_title].empty:
+            self.methods[self.feature_methods_title] = pd.concat([self.methods[self.feature_methods_title], pd.Series(method, dtype='object')])
 
-        method = 'The genome assembly was queried for features using blastn (v ' + self.pima_data.versions[
-            'blastn'] + ').  ' + \
-                 'Feature hits were clustered using bedtools (v ' + self.pima_data.versions['bedtools'] + ') ' + \
-                 'and the highest scoring hit for each cluster was reported.'
+        # Report all notes for feature detection
+        if not self.pima_data.annotation_notes.empty: 
+            self.doc.new_header(level=2,title="Annotation warnings") 
+            for note in self.pima_data.annotation_notes:
+                self.doc.new_line(note)
+
+    def add_amrfinder_results(self):
+        amrfinder_title = 'AMR Finder results'
+        if self.pima_data.amrfinder_results.empty:
+            return
+        
+        self.doc.new_line()
+        self.doc.new_header(level=2,title=amrfinder_title)
+        amrfinder_results = self.pima_data.amrfinder_results.copy()
+        amrfinder_results = amrfinder_results[["Contig id", "Start", "Stop", "% Identity to reference", "Element symbol", "Class"]]
+        amrfinder_results['Start'] = amrfinder_results['Start'].apply(lambda x: f"{x:,}")
+        amrfinder_results['Stop'] = amrfinder_results['Stop'].apply(lambda x: f"{x:,}")
+        amrfinder_results['% Identity to reference'] = amrfinder_results['% Identity to reference'].apply(lambda x: f"{x:.3f}")
+        amrfinder_results['Class'] = amrfinder_results['Class'].str.lower()
+
+        row_count=len(amrfinder_results)+1
+        Table_List = [
+            'Contig', 'Start', 'Stop', 'Gene', 'Identity (%)', 'Abx Class',
+        ]
+        col_count=len(Table_List)
+        Table_List.extend(amrfinder_results[['Contig id', 'Start', 'Stop', 'Element symbol', '% Identity to reference', 'Class']].values.flatten().tolist())
+        self.doc.new_line()
+        self.doc.new_table(columns=col_count, rows=row_count, text=Table_List, text_align='left')
+
+        method = (
+            f"The genome assembly was queried for features using amrfinder v.{self.pima_data.versions['amrfinder']}\n"
+            f"AMRFinder was run with the database v.{self.pima_data.versions['amrfinder database']}"
+        )
         self.methods[self.feature_methods_title] = pd.concat([self.methods[self.feature_methods_title], pd.Series(method, dtype='object')])
 
     def add_feature_plots(self):
@@ -494,14 +578,17 @@ class PimaReport:
         self.doc.new_paragraph('Only contigs with features are shown')
 
         for contig in self.pima_data.feature_plots.index.tolist():
-            image_png = self.pima_data.feature_plots[contig]
+            image = self.pima_data.feature_plots[contig]
             self.doc.write(
-                self.doc.new_inline_image(
-                    text='Analysis',
-                    path=os.path.abspath(image_png),
-                )
-                ,wrap_width=0
+                    f"\n![Analysis]({os.path.abspath(image)})\n"
             )
+            # self.doc.write(
+            #     self.doc.new_inline_image(
+            #         text='Analysis',
+            #         path=os.path.abspath(image_png),
+            #     )
+            #     ,wrap_width=0
+            # )
         
         method = f"Detected features were visualized using dna_features_viewer v({self.pima_data.versions['dna_features_viewer']})."
         self.methods[self.feature_methods_title] = pd.concat([self.methods[self.feature_methods_title], pd.Series(method, dtype='object')])
@@ -509,11 +596,14 @@ class PimaReport:
     def add_virulence_gene_hits(self):
         if not self.pima_data.will_have_genome_fasta:
             return
+        if not self.pima_data.ba_virulence_genes:
+            return
 
+        organism_label = (self.pima_data.organism or "").replace("_", " ")
         self.doc.new_line()
-        self.doc.new_header(level=2,title='Bacillus anthracis virulence genes')
+        self.doc.new_header(level=2, title=f'{organism_label} virulence genes')
         if len(self.pima_data.ba_virulence_hits) == 0:
-            self.doc.new_paragraph('No virulence genes detected above 90% idenity and 90% coverage')
+            self.doc.new_paragraph('No virulence genes detected above 90% identity and 90% coverage')
             return
 
         features = self.pima_data.ba_virulence_hits.copy()
@@ -526,20 +616,20 @@ class PimaReport:
             #subset features dataframe by the contig IDs
             contig_features = features.loc[(features[0] == contig)]
             Table_List = [
-                'Virulence Gene', 'Start', 'Stop', 'Identity (%)', 'Coverage (%)', 'Strand',
+                'Virulence Gene', 'Start', 'Stop', 'Identity (%)', 'Strand',
             ]
 
             for i in range(contig_features.shape[0]): #take each feature from the contig table
                 feature = contig_features.iloc[i, ].copy(deep=True) 
                 feature[4] = '{:.1f}'.format(feature[4]*100)
-                feature[6] = '{:.1f}'.format(feature[6]*100)
-                Table_List.extend([str(val) for val in [feature[3],feature[1],feature[2],feature[4],feature[6],feature[5]]])
+                Table_List.extend([str(val) for val in [feature[3],feature[1],feature[2],feature[4],feature[5]]])
 
-            row_count = int(len(Table_List) / 6)
+            row_count = int(len(Table_List) / 5)
             self.doc.new_line()
-            self.doc.new_table(columns=6, rows=row_count, text=Table_List, text_align='left')
+            self.doc.new_table(columns=5, rows=row_count, text=Table_List, text_align='left')
 
     def add_mutations(self):
+        mutation_title = 'AMR conferring variants detected relative to reference'
 
         if not self.pima_data.did_call_mutations:
             return
@@ -549,7 +639,7 @@ class PimaReport:
         mutations['var'] = mutations['var'].apply(lambda x: f"{x[0:8]}...{len(x)-8}" if len(x) > 8 else x)
         mutations['GE'] = mutations['GE'].apply(lambda x: f"{x[0:5]}" if len(x) > 5 else x)
         self.doc.new_line()
-        self.doc.new_header(level=2,title=self.mutation_title)
+        self.doc.new_header(level=2,title=mutation_title)
         if mutations.size == 0:
             note = f"No mutations were confidently identified in any of the regions specified by the provided mutations bed file: {self.pima_data.mutation_region_bed}"
             self.doc.new_paragraph(note)
@@ -597,7 +687,7 @@ class PimaReport:
             drugs = set(mutations['amr_class'])
             mutations['loc'] = mutations['loc'].astype(int).apply(lambda x: '{:,}'.format(x))
             for amr_class in set(mutations['amr_class']):
-                self.doc.new_header(level=3,title=amr_class.title())
+                self.doc.new_header(level=3,title=amr_class.title(), add_table_of_contents='n')
                 hits = mutations[mutations['amr_class'] == amr_class].copy()
                 Table_List = [
                     'Region', 'Mutation Type', 'Position', 'Reference', 'Variant', 'Supporting Reads', 'Note',
@@ -650,47 +740,53 @@ class PimaReport:
         self.methods[self.mutation_methods_title] = pd.concat([self.methods[self.mutation_methods_title], pd.Series(method,dtype="object")])
 
     def add_appendix_title(self):
+        appendix_title = "Appendices"        
         if len(self.appendices) == 0:
             return
 
         else:
             self.doc.new_line('<div style="page-break-after: always;"></div>')
             self.doc.new_line()
-            self.doc.new_header(2, self.appendix_title)
+            self.doc.new_header(2, appendix_title)
 
     def add_amr_matrix(self):
-
+        amr_matrix_title = 'Summary of AMR Features Detected'
         if not getattr(self.pima_data, 'did_draw_amr_matrix', False):
             return
 
-        amr_matrix_png = self.pima_data.amr_matrix_png
-        self.doc.new_line()
-        self.doc.new_header(level=2,title=self.amr_matrix_title)
-        self.doc.new_line('AMR genes and mutations with their corresponding drugs.')
+        #amr_matrix_png = self.pima_data.amr_matrix_png
+        amr_matrix = self.pima_data.amr_matrix_fig
         self.doc.write(
-            self.doc.new_inline_image(
-                text='AMR genes and mutations with their corresponding drugs',
-                path=amr_matrix_png
-            )
-            ,wrap_width=0
-        )
+                f"\n![{amr_matrix_title}]({amr_matrix})\n"
+        )        
+        # self.doc.new_line()
+        # self.doc.new_header(level=2,title=amr_matrix_title)
+        # self.doc.write(
+        #     self.doc.new_inline_image(
+        #         text='All AMR genes and variants detected',
+        #         path=amr_matrix_png
+        #     )
+        #     ,wrap_width=0
+        # )
         method = (
-            f"Detected SNPs or INDELs compared to the provided reference within regions specified by the mutations_regions.bed file were reported"
+            f"Detected genes, SNPs or INDELs compared to the provided reference within regions specified by the mutations_regions.bed file were reported"
             f"and then visualized in a heatmap using matplotlib v({self.pima_data.versions['matplotlib']})."
         )
         self.methods[self.mutation_methods_title] = pd.concat([self.methods[self.mutation_methods_title], pd.Series(method,dtype="object")])
 
-    def add_large_indels(self):
 
+    def add_large_indels(self):
+        large_indel_title = 'Large insertions & deletions'
+        large_indel_notes_title = 'Large insertions & deletions notes'
         if len(self.pima_data.large_indels) == 0:
             return
         
         large_indels = self.pima_data.large_indels
         self.doc.new_line()
-        self.doc.new_header(level=2,title=self.large_indel_title)
+        self.doc.new_header(level=2,title=large_indel_title)
 
         if len(self.pima_data.large_indel_notes) > 0:
-            self.doc.new_header(level=3, title=self.large_indel_notes_title)
+            self.doc.new_header(level=3, title=large_indel_notes_title, add_table_of_contents='n')
             for note in self.pima_data.large_indel_notes:
                 self.doc.new_line(note)
 
@@ -698,7 +794,7 @@ class PimaReport:
 
             genome_indels = large_indels[genome].copy()
             self.doc.new_line()
-            self.doc.new_header(level=3,title=genome)
+            self.doc.new_header(level=3,title=genome, add_table_of_contents='n')
             if genome == 'Reference insertions':
                 self.doc.new_paragraph('*(Deletions in query)*')
                 self.doc.new_line()
@@ -726,7 +822,9 @@ class PimaReport:
         self.doc.new_line()
 
     def add_plasmids(self):
-
+        plasmid_title = "Plasmid annotation"
+        plasmid_notes_title = 'Plasmid annotation notes'
+        
         if not getattr(self.pima_data, 'did_call_plasmids', False):
             return
 
@@ -737,7 +835,7 @@ class PimaReport:
 
             plasmids = plasmids.copy()
             self.doc.new_line()
-            self.doc.new_header(level=2,title=self.pima_data.plasmid_title)
+            self.doc.new_header(level=2,title=plasmid_title)
 
             plasmids['query.size'] = plasmids['query.size'].apply(lambda x: '{:,}'.format(x))
             plasmids['aligned.bases'] = plasmids['aligned.bases'].apply(lambda x: '{:,}'.format(x))
@@ -761,7 +859,7 @@ class PimaReport:
 
         #Plasmid Annotation Notes
         if len(self.pima_data.plasmid_notes) > 0:
-            self.doc.new_header(level=3, title=self.plasmid_notes_title)
+            self.doc.new_header(level=3, title=plasmid_notes_title, add_table_of_contents='n')
             for note in self.pima_data.plasmid_notes:
                 self.doc.new_line(note)
 
@@ -788,50 +886,32 @@ class PimaReport:
             return
 
         self.doc.new_line()
-        self.doc.new_header(level=2, title=self.methods_title)
+        self.doc.new_header(level=1, title=self.methods_title)
 
 
         for methods_section in self.methods.index.tolist():
             if len(self.methods[methods_section]) == 0:
                 continue
             self.doc.new_line()
-            self.doc.new_header(level=3,title=methods_section)
+            self.doc.new_header(level=2,title=methods_section)
             self.doc.new_paragraph(' '.join(self.methods[methods_section]))
-
-    def add_summary(self):
-
-        self.doc.new_header(level=1, title='CDC Advisory')
-        self.doc.new_paragraph(self.cdc_advisory)
-        self.doc.new_line()
-        self.add_run_information()
-        self.add_ont_library_information()
-        self.add_illumina_library_information()
-        self.add_assembly_information()
-        self.add_contig_info()
-        self.add_assembly_notes()
             
     def make_tex(self):
-        self.doc.new_table_of_contents(table_title='Detailed Run Information', depth=2,marker="TableOfContents")
+        """Populate the ToC and create the md document"""
+        self.doc.new_table_of_contents(table_title='Report Contents', depth=1, marker="TableOfContents")
         text = self.doc.file_data_text
         text = text.replace("##--[","")
         text = text.replace("]--##","")
         self.doc.file_data_text = text
         self.doc.create_md_file()
 
-    def make_report(self):
-
+    def main(self):
+        """Build the full report"""
         self.start_doc()
-        self.add_summary()
-        self.add_contamination()
-        self.add_virulence_gene_hits()
-        self.add_features()
-        self.add_feature_plots()
-        self.add_alignment()
-        self.add_circos()
-        self.add_mutations()
-        self.add_amr_matrix()
-        self.add_large_indels()
-        self.add_plasmids()
+        self.add_run_information()
+        self.add_run_metrics()
+        self.add_feature_detection()
+        self.add_reference_comparison()
         self.add_methods()
         self.add_appendix_title()
         self.make_tex()
@@ -870,10 +950,10 @@ def make_report(pima_data: PimaData, settings: Settings):
     os.mkdir(pima_data.report_dir)
 
     pima_data.report_prefix = os.path.join(pima_data.report_dir, 'report')
-    pima_data.report_md = pima_data.report_prefix + '.md'
+    pima_data.report_md = f'{pima_data.report_prefix}.md'
 
     pima_data.markdown_report = PimaReport(pima_data, settings)
-    pima_data.markdown_report.make_report()
+    pima_data.markdown_report.main()
 
     ## Add appendices to the pima report
     if len(pima_data.markdown_report.appendices) > 0:
@@ -894,10 +974,10 @@ def make_report(pima_data: PimaData, settings: Settings):
             #pima_data.files_to_clean.append(mod_appendix)
             #pima_data.files_to_clean.append(os.path.join(pima_data.report_dir, os.path.basename(png)))
 
-    pima_data.report_pdf = pima_data.report_prefix + '.pdf'
+    pima_data.report_pdf = f'{pima_data.report_prefix}.pdf'
     validate_file_and_size_or_error(pima_data, pima_data.report_md, 'Report MD', 'cannot be found', 'is empty')
     
-    tectonic_stdout, tectonic_stderr = std_files(os.path.join(pima_data.report_dir, 'markdown2pdf'))
+    pandoc_stdout, pandoc_stderr = std_files(os.path.join(pima_data.report_dir, 'markdown2pdf'))
     command = ' '.join(
         [
             'pandoc -f gfm',
@@ -905,8 +985,8 @@ def make_report(pima_data: PimaData, settings: Settings):
             '-o', pima_data.report_pdf,
             '--pdf-engine=weasyprint',
             '--css ' + settings.pima_css,
-            '1>', tectonic_stdout, 
-            '2>', tectonic_stderr,
+            '1>', pandoc_stdout, 
+            '2>', pandoc_stderr,
         ]
     )
     print_and_run(pima_data, command, change_exe_dir=pima_data.report_dir)

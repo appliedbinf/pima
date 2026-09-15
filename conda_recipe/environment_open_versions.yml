@@ -8,6 +8,7 @@ channels:
 dependencies:
   - git
   - gawk
+  - ncbi-amrfinderplus
   - bedtools
   - biopython
   - blast
@@ -28,6 +29,7 @@ dependencies:
   - pathos
   - python
   - pyfaidx
+  - pybedtools
   - python_circos
   - r
   - r-hash
@@ -36,7 +38,6 @@ dependencies:
   - r-optparse
   - samtools
   - varscan
-  - qcat
   - medaka
   - pilon
   - polypolish

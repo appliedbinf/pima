@@ -53,9 +53,9 @@ def parse_args(settings: Settings):
         help="Print an example sample sheet that can be used with pima. "
         + "Use without other options.",
     )
+
     # Input arguments
     input_group = parser.add_argument_group("Input options")
-
     input_group.add_argument(
         "--ont-model",
         required=False,
@@ -205,7 +205,7 @@ def parse_args(settings: Settings):
     plasmid_group.add_argument(
         "--plasmid-database",
         required=False,
-        default=settings.plasmid_database_default_fasta,
+        default=settings.plasmid_database_fasta,
         metavar="<PLASMID_FASTA>",
         help="Path to a FASTA file with reference plasmid sequences",
     )
@@ -220,49 +220,28 @@ def parse_args(settings: Settings):
         help="Use Kraken2 to look for contamination in the input read (default : %(default)s)",
     )
 
-    # AMR gene options
-    amr_group = parser.add_argument_group("AMR gene search options")
-    amr_group.add_argument(
-        "--amr-database",
-        required=False,
-        default=settings.amr_database_default,
-        metavar="<AMR_FASTA>",
-        help="Path to a FASTA file with AMR gene sequences (default : %(default)s)",
-    )
-    amr_group.add_argument(
+    # Feature search options
+    feature_group = parser.add_argument_group("Feature (amr, inc, virulence etc...) search options")
+    feature_group.add_argument(
         "--no-amr",
         required=False,
         default=False,
         action="store_true",
-        help="Skip AMR search (default : %(default)s)",
+        help="Skip resfinder AMR search (default : %(default)s)",
     )
-
-    # Inc group options
-    inc_group = parser.add_argument_group("Incompatibility group search options")
-    inc_group.add_argument(
-        "--inc-database",
+    feature_group.add_argument(
+        "--amrfinder",
         required=False,
-        default=settings.inc_database_default,
-        metavar="<INC_FASTA>",
-        help="Path to a FASTA file with incompatibility group sequences (default : %(default)s)",
+        default=False,
+        action="store_true",
+        help="Run NCBI's AMRFinder (default: %(default)s)",
     )
-    inc_group.add_argument(
+    feature_group.add_argument(
         "--no-inc",
         required=False,
         default=False,
         action="store_true",
-        help="Skip incompatibility group search (default : %(default)s)",
-    )
-
-    # Pull in custom feature sets
-    other_feature_group = parser.add_argument_group("Other feature search options")
-    other_feature_group.add_argument(
-        "--feature",
-        required=False,
-        default=None,
-        metavar="<FEATURE_FASTA>",
-        action="append",
-        help="Path to a FASTA file with feature sequences",
+        help="Skip plasmidfinder incompatibility group search (default : %(default)s)",
     )
 
     # Drawing options

@@ -2,6 +2,7 @@ import os
 import sys
 import shutil
 import glob
+import json
 
 from Pima.pima_data import PimaData
 from Pima.utils.settings import Settings
@@ -10,6 +11,7 @@ from Pima.utils.utils import (
     print_and_log,
     print_and_run,
     validate_file_and_size,
+    validate_utility,
     calc_md5,
 )
 
@@ -102,6 +104,7 @@ def validate_organism(pima_data: PimaData, settings: Settings):
         pima_data.load_reference()
 
     pima_data.will_have_reference_fasta = True
+    
     #Verify checksums
     genome_version = calc_md5(pima_data, os.path.join(pima_data.organism_dir, "genome.fasta"))
     bed_version = calc_md5(pima_data, os.path.join(pima_data.organism_dir, "confirmed_amr_mutations.bed"))
@@ -118,6 +121,19 @@ def validate_organism(pima_data: PimaData, settings: Settings):
             f"If this was expected, please update the {os.path.join(pima_data.organism_dir, 'version.txt')} file."
         )
         return
+
+    #Load organism specific thresholds
+    if validate_file_and_size(pima_data, os.path.join(pima_data.organism_dir, 'thresholds.json')):
+        with open(os.path.join(pima_data.organism_dir, 'thresholds.json'), 'r') as f:
+            config = json.load(f)
+        type_mapping = {"int": int, "float": float, "str": str}
+        for param, info in config.items():
+            expected_type = type_mapping[info["type"]]
+            specific_value = info["value"]
+            if not isinstance(specific_value, expected_type):
+                specific_value = expected_type(specific_value)
+            setattr(pima_data, param, specific_value)
+
 
 def download_organism(pima_data: PimaData, organism: str):
 
@@ -144,8 +160,8 @@ def download_organism(pima_data: PimaData, organism: str):
 
         replace_dict = {
             ">AE017334.2 Bacillus anthracis str. 'Ames Ancestor', complete genome": ">chromosome",
-            ">AE017336.2 Bacillus anthracis str. 'Ames Ancestor' plasmid pXO1, complete sequence": ">pX01",
-            ">AE017335.3 Bacillus anthracis str. 'Ames Ancestor' plasmid pXO2, complete sequence": ">pX02",
+            ">AE017336.2 Bacillus anthracis str. 'Ames Ancestor' plasmid pXO1, complete sequence": ">pXO1",
+            ">AE017335.3 Bacillus anthracis str. 'Ames Ancestor' plasmid pXO2, complete sequence": ">pXO2",
         }
         with open(genome_temp, "r") as f:
             with open(genome, "w") as w:
@@ -166,6 +182,7 @@ def download_organism(pima_data: PimaData, organism: str):
             )
             return
 
+
 def download_databases(pima_data: PimaData, settings: Settings):
 
     print_and_log(
@@ -175,7 +192,8 @@ def download_databases(pima_data: PimaData, settings: Settings):
         pima_data.main_process_color,
     )
 
-    database_fasta = settings.plasmid_database_default_fasta
+    #Plasmids
+    database_fasta = settings.plasmid_database_fasta
 
     if not validate_file_and_size(pima_data, database_fasta):
         print_and_log(
@@ -200,7 +218,8 @@ def download_databases(pima_data: PimaData, settings: Settings):
             pima_data.sub_process_color,
         )
 
-    if not validate_file_and_size(pima_data, os.path.join(settings.kraken_database_default, "hash.k2d")):
+    #Kraken2
+    if not validate_file_and_size(pima_data, os.path.join(settings.kraken_database, "hash.k2d")):
         print_and_log(
             pima_data,
             'Downloading and the prebuilt 8gb kraken2 database, 20230605, (may take some time)', 
@@ -208,18 +227,18 @@ def download_databases(pima_data: PimaData, settings: Settings):
             pima_data.sub_process_color,
         )
         #if download was corrupted and the files (hash, opts, taxo) are not present, we need to delete and try again
-        if os.path.isdir(settings.kraken_database_default):
-            shutil.rmtree(settings.kraken_database_default)
+        if os.path.isdir(settings.kraken_database):
+            shutil.rmtree(settings.kraken_database)
 
-        os.makedirs(settings.kraken_database_default)
+        os.makedirs(settings.kraken_database)
         command = " ".join(
             [
-                'wget -O', f"{settings.kraken_database_default}.tar.gz",
+                'wget -O', f"{settings.kraken_database}.tar.gz",
                 'https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08gb_20230605.tar.gz;',
                 'tar xvf', 
-                f"{settings.kraken_database_default}.tar.gz", 
+                f"{settings.kraken_database}.tar.gz", 
                 '-C', 
-                settings.kraken_database_default,
+                settings.kraken_database,
                 '1> /dev/null 2> /dev/null',
             ]
         )
@@ -227,11 +246,11 @@ def download_databases(pima_data: PimaData, settings: Settings):
         command = " ".join(
             [
                 'rm', 
-                f"{settings.kraken_database_default}.tar.gz",
-                f"{settings.kraken_database_default}/*kmer_distrib",
-                f"{settings.kraken_database_default}/inspect.txt",
-                f"{settings.kraken_database_default}/ktaxonomy.tsv",
-                f"{settings.kraken_database_default}/seqid2taxid.map"
+                f"{settings.kraken_database}.tar.gz",
+                f"{settings.kraken_database}/*kmer_distrib",
+                f"{settings.kraken_database}/inspect.txt",
+                f"{settings.kraken_database}/ktaxonomy.tsv",
+                f"{settings.kraken_database}/seqid2taxid.map"
             ]
         )
         print_and_run(pima_data, command)
@@ -242,3 +261,25 @@ def download_databases(pima_data: PimaData, settings: Settings):
             pima_data.sub_process_verbosity, 
             pima_data.sub_process_color,
         )
+
+    #AMRFinder
+    if validate_utility(pima_data, "amrfinder_update", "amrfinder_update is not available"):
+        if not validate_file_and_size(pima_data, os.path.join(settings.amrfinder_database, "latest", "AMRProt.fa")):
+            print_and_log(
+                pima_data,
+                "Downloading AMRFinder database",
+                pima_data.sub_process_verbosity,
+                pima_data.sub_process_color,
+            )
+            command = " ".join([
+                "amrfinder_update -d",
+                settings.amrfinder_database,
+            ])
+            print_and_run(pima_data, command)
+        else:
+            print_and_log(
+                pima_data,
+                "AMRFinder database found",
+                pima_data.sub_process_verbosity,
+                pima_data.sub_process_color,
+            )

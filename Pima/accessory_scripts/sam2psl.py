@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
+r"""
 It takes as input a file in SAM format and it converts into a PSL format file.
 
 
@@ -42,7 +42,7 @@ This file is not running/executing/using BLAT.
 
 
 # info PSL
-"""
+r"""
 ========================================================
 More about PSL format is here: http://genome.ucsc.edu/FAQ/FAQformat#format2
 
@@ -181,7 +181,7 @@ reversed. Use the following formulas to convert one to the other:
 
 
 # info SAM format
-"""
+r"""
 http://samtools.github.io/hts-specs/SAMv1.pdf
 
 
@@ -224,7 +224,7 @@ Notes:
 
 """
 
-"""
+r"""
 EXAMPLE conversion SAM to PSL:
 
 SAM:
@@ -451,7 +451,7 @@ def parse_cigar(c,toversion="1.3"):
                 mismatches_x = mismatches_x + dd
             d = ''
         else:
-            print >>sys.stderr,"ERROR: unknown CIGAR:",c
+            print("ERROR: unknown CIGAR:",c, file=sys.stderr)
             sys.exit(1)
     if mismatches_x and toversion == '1.3':
         rr = []
@@ -464,7 +464,7 @@ def parse_cigar(c,toversion="1.3"):
                 break
             elif r[i][0] in ('X', '=', 'M'):
                 b = r[i][1]
-                for j in xrange(i+1,n):
+                for j in range(i+1,n):
                     if r[j][0] in ('=','M','X'):
                         b = b + r[j][1]
                     else:
@@ -634,7 +634,7 @@ def get_psl(sam, lens, use_cigar_13=True , replace_string = '', read_sequence=Fa
                 if len(psl) < psl_seq + 1:
                     psl.append(sam[sam_SEQ])
 
-            psl = map(str,psl)
+            psl = list(map(str,psl))
 
     return psl
 

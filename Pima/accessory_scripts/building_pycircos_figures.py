@@ -412,26 +412,3 @@ if __name__ == "__main__":
                 circos_fig = circos_elem.main()
 
                 circos_fig.save(file_name=f"{outdir}/{ge_name}", format="png" , dpi=300)
-
-"""
-    for dir in os.scandir("../pima_downsample_ont/"):
-        if dir.is_dir():
-            dirname = os.path.basename(dir)
-            with open(f"{dir.path}/insertions/reference.sizes", "r") as fin:
-                for line in fin:
-                    ge_name, ge_size = line.rstrip().rsplit()
-                    aln_file = f"{dir.path}/circos/{ge_name}/alignment.txt"
-                    cov_file = f"{dir.path}/circos/{ge_name}/coverage.mpileup"
-                    illumina_cov_file = f"{dir.path}/circos/{ge_name}/illumina_coverage.mpileup"
-                    gene_file = "/scicomp/home-pure/tsz0/Projects/devPima/MergedPima/data/ba_virulence_genes.bed"
-                    #outdir = f"{dir.path}/pima_out/20230308_Minion_TM_01/Sterne-CLR1-2/circos/{ge_name}"
-                    circos_elem = BuildCircosPlots(ge_name=ge_name, 
-                                                    ge_size=int(ge_size),
-                                                    aln_file=aln_file,
-                                                    cov_file=cov_file,
-                                                    illumina_cov_file=illumina_cov_file,
-                                                    gene_file=gene_file,
-                                                    outdir=None)
-                    circos_fig = circos_elem.main()
-                    circos_fig.save(file_name=f"{dirname}_{ge_name}", format="png" , dpi=300)
-"""

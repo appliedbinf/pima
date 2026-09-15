@@ -2,6 +2,7 @@ import re
 import os
 
 import pandas as pd
+from Bio import SeqIO
 
 from Pima.pima_data import PimaData
 from Pima.utils.utils import (
@@ -41,7 +42,18 @@ def validate_genome_fasta(pima_data: PimaData):
         pima_data.errors.append('Input genome FASTA ' + pima_data.genome_fasta + ' cannot be found')
     else :
         pima_data.load_genome()
-        
+
+
+    # confirm fasta format
+    try:
+        with open(pima_data.genome_fasta, 'r') as f:
+            records = SeqIO.parse(f, 'fasta')
+            has_records = any(records)
+            if not has_records:
+                pima_data.errors.append(f'Input genome FASTA {pima_data.genome_fasta} appears to have no valid fasta lines')
+    except Exception:
+        pima_data.errors.append(f'Input genome FASTA {pima_data.genome_fasta} is not recognized as a valid fasta file')
+
     pima_data.will_have_genome_fasta = True
     
 
@@ -258,10 +270,7 @@ def flye_ont_fastq(pima_data: PimaData):
             flye_stderr,
         ]
     )
-    #########
-    #########   TEMP TO AVOID ASSEMBLING DURING DEV
-    #########
-    #command = " ".join(["cp", "-r", os.path.join(pima_data.backup_dir, "ont_assembly/*"), flye_output_dir])
+
     print_and_run(pima_data, command)
     validate_file_and_size_or_error(
         pima_data, flye_fasta, "Flye fasta", "cannot be found after flye", "is empty"

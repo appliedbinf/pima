@@ -36,9 +36,7 @@ def validate_contamination_check(pima_data: PimaData, settings: Settings):
         command = 'kraken2 --version'
         pima_data.versions['kraken2'] = re.search(r'[0-9]+\.[0-9.]+', print_and_run(pima_data, command)[0]).group(0)
 
-    if os.path.isdir(settings.kraken_database_default): 
-        pima_data.kraken_database = settings.kraken_database_default
-    else:
+    if not os.path.isdir(settings.kraken_database): 
         pima_data.errors.append("No kraken2 database detected, try and run pima with --download. Exiting now.")
     
     pima_data.analysis.append(['fastq_contamination', pima_data, settings])
@@ -117,7 +115,7 @@ def kraken_fastq(pima_data: PimaData, settings: Settings, fastq, fastq_dir: str)
             '--out', kraken_out,
             '--class', kraken_class,
             '--unclass', kraken_unclass,
-            '--db', pima_data.kraken_database,
+            '--db', settings.kraken_database,
             fastq_arg,
             '1>', kraken_stdout, '2>', kraken_stderr,
         ]

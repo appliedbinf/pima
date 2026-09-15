@@ -18,7 +18,7 @@ workflow {
                 sample_id                    : row.sample_name,
                 output_directory             : row.output_directory,
                 ont_fastq                    : row.ont_fastq,
-                illumina_fastq               : row.illumina_r1,
+                illumina_fastq               : row.illumina_fastq,
                 genome                       : row.genome,
                 genome_size                  : row.genome_size,
                 reference_organism           : row.reference_organism,

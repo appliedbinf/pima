@@ -8,7 +8,7 @@ class PimaData:
     def __init__(self, opts=None, unknown_args=None):
         # The actual steps to carry out in the analysis held as a list
         self.analysis = []
-        
+      
         # Verbosity levels and colors
         self.error_color = Colors.FAIL
         self.fail_verbosity = 1
@@ -92,15 +92,14 @@ class PimaData:
         # Feature options
         self.no_amr = False
         self.no_inc = False
-        self.feature_fastas = None
-        self.feature_hits = pd.Series(dtype=object)
-        self.feature_plots = pd.Series(dtype=object)
-        self.feature_dirs = []
-        self.feature_names = []
-        self.feature_colors = []
-        self.did_blast_feature_sets = False
+        self.amrfinder = False  
         self.ba_virulence_hits = None
-        
+        self.amr_database = None #populated during annotations validation
+        self.inc_database = None
+        self.ba_virulence_genes = None
+        self.inc_color = '#A8DADC'
+        self.amr_color = '#F08E96'
+
         # Download options
         self.download = False
         self.example_sample_sheet = False
@@ -114,13 +113,16 @@ class PimaData:
         self.reference = None
         self.amr_mutations = pd.Series(dtype=object)
         self.mutation_region_bed = None
+        self.non_amr_bed = None
         self.amr_region_names = None
         self.virulence_genes_fp = None
         self.did_call_mutations = False
+        self.did_blast_feature_sets = False
         self.amr_deletions = pd.DataFrame()
         self.did_call_large_indels = False
         self.reference_contig_order = None
         self.organism_amr_appendices = None
+
         # Files to remove when done
         self.files_to_clean = []
 
@@ -129,6 +131,7 @@ class PimaData:
         self.did_call_plasmids = False
 
         # Notes for different sections of the analysis
+        self.annotation_notes = pd.Series(dtype=object)
         self.assembly_notes = pd.Series(dtype=object)
         self.alignment_notes = pd.Series(dtype=object)
         self.large_indel_notes = pd.Series(dtype=object)
@@ -224,24 +227,23 @@ class PimaData:
         self.query_aligned_bases = 0
         self.reference_aligned_fraction = 0
         self.query_aligned_fraction = 0
+        self.query_alignment_stats = pd.Series(dtype="float64")
 
         # Plasmid and feature options
         self.plasmids = opts.plasmids
         self.plasmid_database = opts.plasmid_database
         self.did_call_plasmids = False
         self.no_drawing = opts.no_drawing
-        self.amr_database = opts.amr_database
         self.no_amr = opts.no_amr
-        self.inc_database = opts.inc_database
         self.no_inc = opts.no_inc
-        self.feature_fastas = opts.feature
-        self.feature_hits = pd.Series(dtype="float64")
         self.feature_plots = pd.Series(dtype="float64")
-        self.feature_dirs = []
-        self.feature_names = []
-        self.feature_colors = []
+        self.amrfinder = opts.amrfinder
+        self.amrfinder_results = pd.Series(dtype="float64")
+        self.resfinder_hits = pd.Series(dtype="float64")
+        self.inc_hits = pd.Series(dtype="float64")
+        self.unique_hits = pd.Series(dtype="float64")
         self.download = opts.download
-
+ 
         # Reference options
         self.organism = opts.organism
         self.list_organisms = opts.list_organisms
@@ -262,33 +264,8 @@ class PimaData:
         # Reporting
         self.no_report = False
         self.analysis_name = opts.name
-        self.mutation_title = "Mutations"
-        self.report[self.mutation_title] = pd.Series(dtype="float64")
         self.large_indels = pd.Series(dtype="float64")
-        self.plasmid_title = "Plasmid annotation"
-        self.report[self.plasmid_title] = pd.Series(dtype="float64")
-        self.amr_matrix_title = "AMR matrix"
         self.did_draw_amr_matrix = False
-        self.report[self.amr_matrix_title] = pd.Series(dtype="float64")
-        self.methods_title = "Methods summary"
-        self.report[self.methods_title] = pd.Series(dtype="float64")
-        self.basecalling_methods = "Basecalling & processing"
-        self.report[self.methods_title][self.basecalling_methods] = pd.Series(
-            dtype="float64"
-        )
-        self.assembly_methods = "Assembly & polishing"
-        self.report[self.methods_title][self.assembly_methods] = pd.Series(
-            dtype="float64"
-        )
-        self.mutation_methods = "Mutation screening "
-        self.report[self.methods_title][self.mutation_methods] = pd.Series(
-            dtype="float64"
-        )
-        self.plasmid_methods = "Plasmid annotation"
-        self.report[self.methods_title][self.plasmid_methods] = pd.Series(
-            dtype="float64"
-        )
-        self.meta_title = "PIMA meta-information"
 
         # See if we got any unknown args.  Not allowed.
         if len(unknown_args) != 0:

@@ -42,10 +42,13 @@ from .evaluate_assembly import(
 )
 
 from .annotations import (
-    validate_features,
+    validate_resfinder,
+    validate_inc,
+    validate_virulence,
     validate_blast,
+    validate_amrfinder,
     blast_feature_sets,
-    blast_ba_virulence_genes,
+    run_amrfinder,
 )
 
 from .plasmids import (
@@ -96,6 +99,10 @@ __all__ = [
     "validate_plasmids",
     "validate_features",
     "validate_blast",
+    "validate_resfinder",
+    "validate_inc",
+    "validate_virulence",
+    "validate_amrfinder",
     "validate_reference_fasta",
     "validate_quast",
     "validate_mutations",
@@ -119,6 +126,7 @@ __all__ = [
     "check_for_small_contigs_and_fragmentation",
     "call_plasmids",
     "blast_feature_sets",
+    "run_amrfinder",
     "call_insertions",
     "quast_genome",
     "call_amr_mutations",

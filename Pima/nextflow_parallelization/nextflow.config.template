@@ -32,7 +32,7 @@ process {
     maxErrors     = '-1'
     // Set h_vmem option for qsub submissions. +6 memory to h_vmem prevents memory allocation errors.
     clusterOptions = { "-l h_vmem=${(check_max((task.memory.toGiga())+6), 'memory').toString().replaceAll(/[\sB]/,'')}G" }
-    cpus   = { check_max( 6     * task.attempt, 'cpus'    ) }
+    cpus   = { check_max( 4     * task.attempt, 'cpus'    ) }
     memory = { check_max( 36.GB * task.attempt, 'memory'  ) }
     time   = { check_max( 8.h   * task.attempt, 'time'    ) }
 }
