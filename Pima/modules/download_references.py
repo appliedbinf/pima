@@ -205,8 +205,11 @@ def download_databases(pima_data: PimaData, settings: Settings):
         command = " ".join(
             [
                 'wget',
-                '-O', database_fasta,
-                'http://pima.appliedbinf.com/data/plasmids_and_vectors.fasta',
+                '-qO-',
+                'https://github.com/appliedbinf/pima/releases/download/v2.4.2/plasmids_and_vectors.fasta.gz',
+                '|',
+                'gunzip',
+                '>', database_fasta
             ]
         )
         print_and_run(pima_data, command)

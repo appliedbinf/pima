@@ -16,6 +16,7 @@ Pima/data/reference_sequences/Bacillus_anthracis/genome.fasta*
 Pima/data/reference_sequences/Bacillus_anthracis/confirmed_amr_mutations_blas.bed
 Pima/data/test_*
 Pima/data/amrfinder_db
+
 #conda recipe
 conda_recipe/test.yml
 

@@ -1,14 +1,14 @@
-{% set name = "pima" %}
+{% set pkg_name = os.environ.get('CONDA_PKG_NAME', 'pima') %}
 {% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
 
 package:
-  name: "{{ name|lower }}"
+  name: "{{ pkg_name|lower }}"
   version: "{{ data.get('version') }}"
 
 source:
-  # git_url: https://github.com/appliedbinf/MergedPima.git
-  # git_tag: development
-  path: ../
+  git_url: https://github.com/appliedbinf/pima.git
+  git_tag: master
+  #path: ../
 
 
 build:
@@ -67,7 +67,7 @@ test:
     - pima -h
 
 about:
-  home: https://githib.com/appliedbinf/MergedPima
+  home: https://githib.com/appliedbinf/pima
   License: MIT
 
 
